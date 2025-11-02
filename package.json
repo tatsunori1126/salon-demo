@@ -1,0 +1,28 @@
+{
+  "name": "your-project",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Your Project Description",
+  "main": "gulpfile.js",
+  "devDependencies": {
+    "autoprefixer": "^10.4.14",
+    "browser-sync": "^3.0.3",
+    "gulp": "^4.0.2",
+    "gulp-clean-css": "^4.3.0",
+    "gulp-image": "^6.3.1",
+    "gulp-imagemin": "^9.1.0",
+    "gulp-newer": "^1.4.0",
+    "gulp-notify": "^5.0.0",
+    "gulp-plumber": "^1.2.1",
+    "gulp-postcss": "^9.0.1",
+    "gulp-rename": "^2.0.0",
+    "gulp-sass": "^5.1.0",
+    "gulp-uglify": "^3.0.2",
+    "sass": "^1.80.4"
+  },
+  "scripts": {
+    "start": "gulp"
+  },
+  "author": "Your Name",
+  "license": "ISC"
+}

@@ -1,0 +1,30 @@
+@charset "UTF-8";
+@use "../../foundation/mixin";
+@use "../../object/utility/color";
+.c-pc-hidden {
+    @include mixin.mid {
+        display: none;
+    }
+}
+.c-sp-hidden {
+    display: none;
+    @include mixin.mid {
+        display: inline-block;
+    }
+}
+.c-pc-only {
+    display: none;
+    @include mixin.pc {
+        display: inline-block;
+    }
+}
+.c-sp-only {
+    @include mixin.pc {
+        display: none;
+    }
+}
+.c-tab-hidden {
+    @include mixin.tab {
+        display: none;
+    }
+}

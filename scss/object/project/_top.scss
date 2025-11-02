@@ -1,0 +1,82 @@
+@charset "UTF-8";
+@use "../../foundation/mixin";
+@use "../utility/color";
+/* ===== カレンダー全体 ===== */
+.salon-calendar {
+    width: 100%;
+    margin: 0 auto;
+    text-align: center;
+}
+
+/* ===== 週ナビボタン ===== */
+.week-nav {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 12px;
+
+    .btn-week {
+        background: #2c7a4b;
+        color: #fff;
+        padding: 6px 14px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-size: 14px;
+        transition: 0.2s;
+
+        &:hover {
+            background: #1d5635;
+        }
+    }
+}
+
+/* ===== カレンダーテーブル ===== */
+.calendar-table {
+    width: 100%;
+    border-collapse: collapse;
+
+    th, td {
+        border: 1px solid #ccc;
+        padding: 6px;
+        font-size: 13px;
+    }
+
+    th {
+        background: #f6f6f6;
+        font-weight: bold;
+        width: 50px;
+    }
+
+    td {
+        height: 36px;
+    }
+}
+
+/* ===== 出勤スタッフ表示 ===== */
+.work-staff-list {
+    font-size: 11px;
+    color: #007850;
+    font-weight: 600;
+    margin-top: 3px;
+}
+
+/* ===== セル状態 ===== */
+.booked {
+    background: #ffdfdf;
+    color: #c22;
+    font-weight: bold;
+    padding: 2px;
+    border-radius: 4px;
+}
+
+.work {
+    background: #e9f9ee;
+    color: #2c7a4b;
+    font-weight: bold;
+    border-radius: 3px;
+    padding: 2px;
+}
+
+.empty {
+    color: #aaa;
+}

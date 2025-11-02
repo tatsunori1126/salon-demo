@@ -1,0 +1,29 @@
+# node_modulesフォルダを除外（依存パッケージ）
+node_modules/
+
+# ローカル開発環境関連のファイル
+*.log
+.DS_Store
+.env
+
+# npmやyarnが生成するロックファイル
+package-lock.json
+yarn.lock
+
+# Gulpのコンパイル生成物（CSSやJSのminifiedファイルなどを除外する場合）
+/css/*.min.css
+/js/min/
+/images/min/
+
+# その他のキャッシュやビルド関連ファイル
+/dist/
+.cache/
+.tmp/
+
+# IDEやエディタの設定ファイル
+.vscode/
+.idea/
+
+# MacOSや他の環境で生成される不要なシステムファイル
+.DS_Store
+Thumbs.db

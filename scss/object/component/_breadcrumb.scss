@@ -1,0 +1,21 @@
+@charset "UTF-8";
+@use "../../foundation/mixin";
+@use "../../object/utility/color";
+.breadcrumbs {
+    font-size: 1.4rem;
+    margin: 0 0 60px;
+    @include mixin.pc {
+        max-width: 1100px;
+        margin: 0 auto 90px;
+        text-align: left;
+    }
+    span {
+        a {
+            text-decoration: none;
+            color: color.$textColor;
+        }
+    }
+    .fa-chevron-right {
+        margin: 0 10px;
+    }
+}

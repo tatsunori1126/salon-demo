@@ -1,0 +1,23 @@
+@charset "UTF-8";
+@use "../../foundation/mixin";
+@use "../utility/color";
+.c-section-title-box {
+    text-align: center;
+    .c-section-title {
+        font-size: 4rem;
+        letter-spacing: 0.1em;
+        font-weight: 400;
+        @include mixin.mid {
+            font-size: 5rem;
+        }
+    }
+    .c-section-title-ja {
+        font-size: 1.4rem;
+        letter-spacing: 0.1em;
+        margin-top: 5px;
+        display: inline-block;
+        @include mixin.mid {
+            font-size: 1.6rem;
+        }
+    }
+}
