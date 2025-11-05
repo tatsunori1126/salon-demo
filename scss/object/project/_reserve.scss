@@ -1,0 +1,33 @@
+.reserve-wrap{max-width:1100px;margin:40px auto;padding:0 16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
+.rs-row{display:flex;gap:12px;align-items:center;margin-bottom:12px;}
+.rs-label{min-width:96px;font-weight:600;}
+.rs-row select{min-width:260px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;}
+.rs-actions{margin:12px 0 20px;}
+.btn-primary{padding:10px 16px;border:none;border-radius:10px;background:#111827;color:#fff;cursor:pointer}
+.btn-primary[disabled]{opacity:.5;cursor:not-allowed}
+.btn-ghost{padding:8px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;color:#111827;text-decoration:none}
+.week-nav{display:flex;gap:8px;margin:10px 0 16px;}
+.cal-title{margin:10px 0 12px;font-size:20px;font-weight:700}
+
+.calendar-table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+.calendar-table thead th{background:#f9fafb;border-bottom:1px solid #e5e7eb;padding:10px;text-align:center;font-weight:700}
+.calendar-table .time-col{width:84px;background:#f3f4f6}
+.calendar-table td,.calendar-table th{border-right:1px solid #eef0f3}
+.calendar-table tr td:last-child,.calendar-table tr th:last-child{border-right:none}
+.calendar-table tbody td{height:42px;text-align:center;vertical-align:middle}
+.cell.available{background:#f6fffb}
+.cell.booked{background:#fff}
+.day-col{min-width:120px}
+
+.slot-btn{min-width:28px;height:28px;line-height:28px;border-radius:999px;padding:0 8px;border:1px solid #059669;background:#10b981;color:#fff;cursor:pointer}
+.slot-btn:hover{filter:brightness(.95)}
+
+.reserve-modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999}
+.reserve-modal__inner{width:min(560px,92vw);background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.1);padding:20px 20px 24px;position:relative}
+.modal-close{position:absolute;right:10px;top:10px;width:36px;height:36px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;cursor:pointer}
+.modal-title{margin:0 0 10px;font-size:18px;font-weight:700}
+.mf-summary{display:grid;row-gap:6px;margin:10px 0 12px;padding:10px;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;font-size:14px}
+.mf-price{margin-left:6px;color:#111827;font-weight:700}
+.mf-row{display:grid;margin:10px 0}
+.mf-row input{padding:10px;border:1px solid #e5e7eb;border-radius:10px}
+.mf-msg{min-height:20px;margin:8px 0 0}

@@ -1,82 +1,234 @@
 @charset "UTF-8";
 @use "../../foundation/mixin";
 @use "../utility/color";
-/* ===== カレンダー全体 ===== */
 .salon-calendar {
-    width: 100%;
-    margin: 0 auto;
-    text-align: center;
-}
-
-/* ===== 週ナビボタン ===== */
-.week-nav {
-    display: flex;
-    justify-content: center;
-    gap: 10px;
-    margin-bottom: 12px;
-
-    .btn-week {
-        background: #2c7a4b;
-        color: #fff;
-        padding: 6px 14px;
-        border-radius: 6px;
+    .week-nav {
+      text-align: center;
+      margin: 12px 0;
+      .btn-week {
+        display: inline-block;
+        padding: 6px 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        margin: 0 6px;
         text-decoration: none;
         font-size: 14px;
-        transition: 0.2s;
-
-        &:hover {
-            background: #1d5635;
-        }
+        &.is-today { background: #f3f4f6; }
+      }
     }
-}
-
-/* ===== カレンダーテーブル ===== */
-.calendar-table {
-    width: 100%;
+    .cal-title { text-align: center; margin: 6px 0 14px; }
+  }
+  
+  .calendar-table {
     border-collapse: collapse;
-
-    th, td {
-        border: 1px solid #ccc;
-        padding: 6px;
-        font-size: 13px;
+    width: 100%;
+    text-align: center;
+  
+    .time-col {
+      width: 70px;
+      font-weight: bold;
+      background: #fafafa;
     }
-
-    th {
-        background: #f6f6f6;
-        font-weight: bold;
-        width: 50px;
+  
+    .day-group {
+      background: #f1f1f1;
+      font-weight: bold;
+      padding: 6px 0;
     }
-
-    td {
-        height: 36px;
+  
+    .staff-col {
+      background: #fcfcfc;
+      font-size: 13px;
+      padding: 3px 0;
+      border-right: 1px solid #eee;
     }
-}
+  
+    td.cell {
+      width: 32px;
+      padding: 4px 0;
+      border: 1px solid #eee;
+      cursor: default;
+    }
+  
+    td.available {
+      background: #e8ffe8;
+    }
+    td.booked {
+      background: #ffe8e8;
+      font-weight: bold;
+    }
+    td.off {
+      color: #bbb;
+      background: #f7f7f7;
+    }
+  }
+  
+  
+  .slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin: 3px 3px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1;
+    user-select: none;
+  }
+  .slot.available {
+    color: #157347;            /* 緑 ○ */
+    background: #e8f7ed;
+    border: 1px solid #bfe8cd;
+  }
+  .slot.booked {
+    color: #b42318;            /* 赤 × */
+    background: #ffe5e5;
+    border: 1px solid #ffb8b8;
+  }
+  .slot.off {
+    color: #6b7280;            /* グレー × */
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+  }
+  
 
-/* ===== 出勤スタッフ表示 ===== */
-.work-staff-list {
-    font-size: 11px;
-    color: #007850;
-    font-weight: 600;
-    margin-top: 3px;
-}
 
-/* ===== セル状態 ===== */
-.booked {
-    background: #ffdfdf;
-    color: #c22;
-    font-weight: bold;
-    padding: 2px;
-    border-radius: 4px;
-}
 
-.work {
-    background: #e9f9ee;
-    color: #2c7a4b;
-    font-weight: bold;
-    border-radius: 3px;
-    padding: 2px;
-}
 
-.empty {
-    color: #aaa;
-}
+
+
+
+
+
+
+  /* ===========================
+   カスタマー予約：カレンダー
+=========================== */
+.salon-calendar {
+    max-width: 100%;
+    margin: 40px auto;
+    overflow-x: auto;
+  }
+  
+  .calendar-table {
+    border-collapse: collapse;
+    width: 100%;
+    text-align: center;
+  }
+  
+  .calendar-table th,
+  .calendar-table td {
+    border: 1px solid #ccc;
+    padding: 6px;
+  }
+  
+  .time-col {
+    width: 60px;
+    background: #f7f7f7;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+  
+  .staff-col {
+    background: #fafafa;
+  }
+  
+  .cell {
+    width: 60px;
+    height: 38px;
+  }
+  
+  .cell.booked {
+    background: #ffdddd;
+    color: #a00;
+  }
+  
+  .cell.available {
+    background: #ddffdd;
+  }
+  
+  .cell.off {
+    background: #eee;
+    color: #666;
+  }
+  
+  .slot-btn {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  
+  /* 終端列の罫線濃く */
+  .date-sep {
+    border-right: 3px solid #666 !important;
+  }
+  
+  /* ===========================
+     モーダル
+  =========================== */
+  .modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+  }
+  
+  .modal-content {
+    background: #fff;
+    padding: 26px 30px;
+    border-radius: 8px;
+    width: 340px;
+    max-width: 90%;
+    text-align: left;
+    box-shadow: 0 0 12px rgba(0,0,0,0.3);
+  }
+  
+  .modal-content h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+  }
+  
+  #reservation-form p {
+    margin-bottom: 14px;
+  }
+  
+  #reservation-form input,
+  #reservation-form select {
+    width: 100%;
+    padding: 6px;
+  }
+  
+  .btn-submit {
+    background: #28a745;
+    color: #fff;
+    padding: 10px;
+    border: none;
+    cursor: pointer;
+    width: 48%;
+  }
+  .btn-cancel {
+    background: #999;
+    color: #fff;
+    padding: 10px;
+    border: none;
+    cursor: pointer;
+    width: 48%;
+  }
+  
+  .submit-row {
+    display: flex;
+    justify-content: space-between;
+  }
+  

@@ -1,75 +1,37 @@
-@charset "UTF-8";
-/* ======================================================
-   出勤管理：カレンダーUI
-   ======================================================*/
 .salon-shift-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 12px;
-  margin-top: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
 }
 
 .salon-shift-cell {
-  border: 1px solid #dcdcdc;
-  border-radius: 8px;
-  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
   padding: 10px;
-  text-align: center;
-  font-size: 14px;
-}
-
-.salon-shift-on {
-  background: #e9f9ee;
-  border-color: #6bcf8b;
+  background: #fff;
 }
 
 .salon-shift-date {
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
-/* ======================================================
-   チェックボックス調整（サイズ／中央配置）
-   ======================================================*/
-.salon-shift-cell input[type=checkbox] {
-  width: 17px;
-  height: 17px;
-  cursor: pointer;
-  -webkit-appearance: none;
-     -moz-appearance: none;
-          appearance: none;
-  border: 2px solid #ccc;
-  border-radius: 4px;
-  display: inline-block;
-  position: relative;
-  background-color: #fff;
-  margin-right: 4px;
-  transition: 0.15s;
-}
-
-/* チェック時の視認性アップ */
-.salon-shift-cell input[type=checkbox]:checked {
-  border-color: #2c7a4b;
-  background-color: #2c7a4b;
-}
-
-/* 中央＆大きめチェックマーク */
-.salon-shift-cell input[type=checkbox]:checked::after {
-  content: "✔";
-  font-size: 14px;
-  color: #fff;
-  position: absolute;
-  top: 48%;
-  left: 50%;
-  transform: translate(-50%, -55%);
-}
-
-/* テキストと横並び */
-.salon-shift-cell label {
+.time-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 14px;
-  line-height: 1.4;
+  gap: 8px;
+  margin: 6px 0;
+}
+.time-row label {
+  width: 40px;
+  color: #6b7280;
+}
+.time-row select {
+  width: 120px;
+}
+
+.salon-shift-cell .desc {
+  color: #9ca3af;
+  font-size: 12px;
+  margin: 6px 0 0;
 }

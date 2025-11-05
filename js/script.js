@@ -1,178 +1,113 @@
-jQuery(function() {
-    const speed = 700; // スクロールスピード
-
-    // ページ全体がロードされた後に実行
-    jQuery(window).on('load', function() {
-        const headerH = jQuery('.l-header').height(); // ヘッダーの高さを取得
-        const hash = window.location.hash;
-
-        // URLにハッシュが存在する場合、対象の位置までスクロール
-        if (hash !== '' && hash !== undefined) {
-            let target = jQuery(hash);
-            target = target.length ? target : jQuery('[name=' + hash.slice(1) + ']');
-            if (target.length) {
-                let position = target.offset().top;
-                jQuery('html,body').animate({ scrollTop: position }, speed, 'swing');
-            }
-        }
-    });
-
-    // ページトップへスクロール
-    jQuery('[data-pagetop]').on('click', function(e) {
+/**
+ * ---------------------------------------------------
+ *  サロン予約モーダルカレンダー（モーダル内専用）
+ * ---------------------------------------------------
+ */
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('reservation-modal');
+    if (!modal) return; // ← モーダルがないページでは実行しない
+  
+    const modalCal = document.getElementById('modal-calendar');
+    let selMenuKey = '', selStaffId = '', modalWeek = 0, selDate = '', selTime = '';
+  
+    function renderModalCalendar() {
+      const fd = new FormData();
+      fd.append('action', 'salon_render_calendar_front');
+      fd.append('menu', selMenuKey);
+      fd.append('staff', selStaffId);
+      fd.append('week', modalWeek);
+  
+      modalCal.innerHTML = `
+        <div class="modal-calendar-header" style="text-align:center; margin:10px 0;">
+          <button type="button" class="btn-week" data-week="prev">← 前の週</button>
+          <button type="button" class="btn-week is-today" data-week="today">今週</button>
+          <button type="button" class="btn-week" data-week="next">次の週 →</button>
+        </div>
+        <div class="modal-calendar-body">読み込み中…</div>`;
+  
+      const body = modalCal.querySelector('.modal-calendar-body');
+  
+      fetch(salon_ajax.url, { method: 'POST', body: fd })
+        .then(r => r.text())
+        .then(html => { body.innerHTML = html; })
+        .catch(() => { body.innerHTML = '読み込みに失敗しました'; });
+    }
+  
+    // モーダル内だけでイベント処理
+    modal.addEventListener('click', e => {
+      const weekBtn = e.target.closest('.btn-week');
+      if (weekBtn) {
         e.preventDefault();
-        jQuery('html, body').animate({ scrollTop: 0 }, speed, 'swing');
-    });
-
-    // ページ内リンクによるスクロール
-    jQuery('[data-scroll-link]').on('click', function (e) {
+        const type = weekBtn.dataset.week;
+        if (type === 'prev') modalWeek--;
+        if (type === 'next') modalWeek++;
+        if (type === 'today') modalWeek = 0;
+        renderModalCalendar();
+        return;
+      }
+  
+      const slotBtn = e.target.closest('.slot-btn');
+      if (slotBtn) {
         e.preventDefault();
-        let href = jQuery(this).attr('href');
-        let target = jQuery(href === '#' || href === '' ? 'html' : href);
-    
-        // ヘッダーの高さを取得（追従固定ヘッダー）
-        const headerH = jQuery('.l-header').outerHeight(); // `outerHeight` で高さを取得（パディング含む）
-        
-        // ターゲットの位置を計算してヘッダーの高さ分調整
-        let position = target.offset().top - headerH;
-    
-        // アニメーションでスクロール
-        jQuery('html, body').animate({ scrollTop: position }, speed, 'swing');
+        modal.querySelectorAll('.slot-btn.selected').forEach(b => b.classList.remove('selected'));
+        slotBtn.classList.add('selected');
+        selDate = slotBtn.dataset.date;
+        selTime = slotBtn.dataset.time;
+        console.log(`選択: ${selDate} ${selTime}`);
+      }
     });
-});
-
-// ハンバーガーボタンのクリックイベント
-jQuery('.hamburger-btn').on('click', function () {
-jQuery('.btn-line').toggleClass('open');
-jQuery('.p-header__nav').fadeToggle(500).toggleClass('active'); // メニューのフェードイン・フェードアウトとクラスの追加
-});
-
-// メニュー項目クリック時のイベント
-jQuery(".p-header__nav-list a").click(function () {
-if (jQuery(window).width() < 1000) {
-    jQuery(".btn-line").removeClass('open');
-    jQuery('.p-header__nav').fadeOut(500).removeClass('active');
-}
-});
-
-// ブラウザリサイズ時に処理をリセット（リサイズ時のみ発動するように）
-jQuery(window).on('resize', function () {
-if (jQuery(window).width() >= 1000) {
-    jQuery('.p-header__nav').show(); // メニューを表示
-    jQuery('.btn-line').removeClass('open'); // ハンバーガーボタンの状態をリセット
-    jQuery('.p-header__nav').removeClass('active'); // メニューの状態をリセット
-} else if (!jQuery('.btn-line').hasClass('open')) {
-    jQuery('.p-header__nav').hide(); // 999px以下で、メニューが開かれていない時は非表示にする
-}
-});
-
-
-// Swiper
-// let swiper = null; // Swiperインスタンスのための変数
-
-// function initializeSwiper() {
-//   if (window.innerWidth >= 1000) {
-//     if (!swiper) { // swiperが初期化されていない場合のみ初期化
-//       swiper = new Swiper('.swiper-container', {
-//         slidesPerView: 2, // 1ページに表示するスライド数
-//         spaceBetween: 60, // スライド間のスペース
-//         loop: false, // スライダーをループさせない
-//         navigation: {
-//           nextEl: '.swiper-button-next',
-//           prevEl: '.swiper-button-prev',
-//         },
-//         pagination: {
-//           el: '.swiper-pagination',
-//           type: 'fraction', // ページネーションをフラクション形式に設定
-//         },
-//         scrollbar: {
-//           el: '.swiper-scrollbar',
-//           draggable: true, // スクロールバーをドラッグ可能に
-//         },
-//       });
-//     }
-//   } else {
-//     if (swiper) { // 1000px以下の場合、Swiperを削除
-//       swiper.destroy(true, true); // 完全にSwiperを削除
-//       swiper = null;
-//     }
-//   }
-// }
-// // 初期化時にSwiperを確認
-// initializeSwiper();
-
-// // ウィンドウがリサイズされた時にSwiperを再度チェック
-// window.addEventListener('resize', initializeSwiper);
-
-
-jQuery(function () {
-    // スクロールトリガーのアニメーション（fadeUp, fadeLeft, fadeRight）
-    const animations = [
-        {
-            className: "fadeUp",
-            from: { y: 10, autoAlpha: 0 },
-            to: { y: 0, autoAlpha: 1, duration: 1.5, ease: "power3.out" }
+  });
+  
+  
+  /**
+   * ---------------------------------------------------
+   *  通常カレンダー週切り替え（モーダル外専用）
+   * ---------------------------------------------------
+   */
+  jQuery(function($) {
+    // ページ内にカレンダーが存在しないなら処理しない
+    if (!$('#calendar-wrapper').length) return;
+  
+    let currentWeek = 0;
+  
+    function loadCalendar() {
+      $.ajax({
+        url: ajaxurl,
+        type: 'POST',
+        data: {
+          action: 'salon_calendar',
+          menu_key: $('#menu_key').val(),
+          staff_id: $('#staff_id').val(),
+          week: currentWeek
         },
-        {
-            className: "fadeLeft",
-            from: { x: -10, autoAlpha: 0 },
-            to: { x: 0, autoAlpha: 1, duration: 1.5, ease: "power3.out" }
+        success: function(res) {
+          $('#calendar-wrapper').html(res);
+          console.log('表示中の週:', currentWeek);
         },
-        {
-            className: "fadeRight",
-            from: { x: 10, autoAlpha: 0 },
-            to: { x: 0, autoAlpha: 1, duration: 1.5, ease: "power3.out" }
+        error: function(xhr, status, err) {
+          console.error('Ajax error:', status, err);
         }
-    ];
-
-    animations.forEach(({ className, from, to }) => {
-        gsap.utils.toArray(`.${className}`).forEach((element) => {
-            gsap.fromTo(
-                element,
-                from,
-                {
-                    ...to,
-                    scrollTrigger: {
-                        trigger: element,
-                        start: "top 70%", // ビューポートの下端に要素が触れた時点で開始
-                        end: "center center", // アニメーションの終了条件
-                        scrub: false,        // スクロール位置に同期しない
-                    },
-                }
-            );
-        });
-    });
-});
-
-
-// お客様の声のスライダー
-jQuery(function () {
-    const swiperVoice = new Swiper('.p-top__voice-slider', {
-        slidesPerView: 1.5, // スライド幅自動
-        spaceBetween: 40,
-        centeredSlides: true,
-        loop: true,
-        speed: 800, // スクロールスピード（大きいほどゆっくり）
-        navigation: {
-            nextEl: '.p-top__voice-next',
-            prevEl: '.p-top__voice-prev',
-        },
-        autoplay: {
-            delay: 15000, // 自動スライドの遅延時間（ミリ秒）
-            disableOnInteraction: false, // ユーザー操作後も自動再生を続ける
-        },
-        pagination: {
-            el: '.p-top__voice-pagination', // 👈 ドットナビの要素を指定
-            clickable: true,                // 👈 クリックでスライド可能に
-        },
-        breakpoints: {
-            800: {
-                slidesPerView: 3.5,
-                spaceBetween: 45,
-            },
-            1200: {
-                slidesPerView: 1.6,
-                spaceBetween: 80,
-            },
-        },
-    });
-});
+      });
+    }
+  
+    // bodyにイベントを委譲（1回だけ登録）
+    $('body')
+      .off('click.salonNextWeek')
+      .on('click.salonNextWeek', '#next-week', function(e) {
+        e.preventDefault();
+        currentWeek++;
+        loadCalendar();
+      });
+  
+    $('body')
+      .off('click.salonPrevWeek')
+      .on('click.salonPrevWeek', '#prev-week', function(e) {
+        e.preventDefault();
+        currentWeek--;
+        loadCalendar();
+      });
+  
+    // 初期表示でAjaxロードしたい場合はON
+    // loadCalendar();
+  });
+  
