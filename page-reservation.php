@@ -140,7 +140,7 @@ get_header(); ?>
       </div>
       <div class="form-actions">
         <button id="back-to-2" class="btn sub">修正する</button>
-        <button id="submit-reservation" class="btn">この内容で確定</button>
+        <button id="confirm-btn" class="btn">この内容で確定</button>
       </div>
       <div class="status" id="submit-status"></div>
     </div>
@@ -168,10 +168,32 @@ document.addEventListener('DOMContentLoaded', function () {
       })
       .catch(() => { roArea.innerHTML = '<div style="color:red;">読み込みに失敗しました</div>'; });
   }
-  roPrev.addEventListener('click', e => { e.preventDefault(); if (roWeek > 0) { roWeek--; loadReadonlyCalendar(); } });
-  roToday.addEventListener('click', e => { e.preventDefault(); roWeek = 0; loadReadonlyCalendar(); });
-  roNext.addEventListener('click', e => { e.preventDefault(); roWeek++; loadReadonlyCalendar(); });
+  roPrev.addEventListener('click', e => { 
+  e.preventDefault(); 
+  if (roWeek > 0) { 
+    roWeek--; 
+    loadReadonlyCalendar(); 
+  } 
+});
+
+roToday.addEventListener('click', e => { 
+  e.preventDefault(); 
+  roWeek = 0; 
+  loadReadonlyCalendar(); 
+});
+
+roNext.addEventListener('click', e => { 
+  e.preventDefault(); 
+  roWeek++; 
+  loadReadonlyCalendar(); 
+});
+
+// ✅ 初回だけ少し遅らせて確実に実行（Local環境でのPOST遅延対策）
+setTimeout(() => {
+  roWeek = 0; // 念のため初期化
   loadReadonlyCalendar();
+}, 300);
+
 
   const modal = document.getElementById('reservation-modal');
   const openModal = document.getElementById('open-modal');
