@@ -232,3 +232,67 @@
     justify-content: space-between;
   }
   
+  /* 定休日列ヘッダー */
+.calendar-table th.holiday-day {
+    background: #f0f0f0;
+    color: #999;
+  }
+  
+  /* 定休日セル */
+  .calendar-table td.holiday {
+    background: #f5f5f5;
+    color: #aaa;
+    text-align: center;
+    font-weight: bold;
+  }
+  
+  /* 凡例 */
+  .legend-holiday {
+    color: #999;
+    margin-left: 10px;
+  }
+  
+
+
+/* ===== モーダル全体 ===== */
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* 上寄せ配置 */
+    overflow-y: auto; /* ✅ モーダル全体で縦スクロール可 */
+    padding: 60px 20px; /* ✅ 上下余白をしっかり確保 */
+    z-index: 9999;
+    box-sizing: border-box;
+  }
+  
+  /* ===== モーダル内ボックス ===== */
+  .modal-inner {
+    background: #fff;
+    border-radius: 14px;
+    padding: 32px 28px;
+    width: 92%;
+    max-width: 880px;
+    margin: auto;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+    box-sizing: border-box;
+  
+    /* ✅ モーダル内部は固定（スクロールは外側で行う） */
+    max-height: none;
+    overflow: visible;
+  }
+  
+  
+  /* ===== スマホ対応 ===== */
+  @media (max-width: 768px) {
+    .modal {
+      padding: 40px 10px;
+    }
+    .modal-inner {
+      padding: 20px;
+      width: 100%;
+    }
+  }
+  

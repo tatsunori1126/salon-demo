@@ -120,54 +120,6 @@ add_action('admin_enqueue_scripts', function($hook){
 
 
 
-/***********************************************************
-* カスタム投稿によって表示件数を変える
-***********************************************************/
-// function change_posts_per_page($query) {
-//   if ( is_admin() || ! $query->is_main_query() )
-//       return;
-
-//   // カスタム投稿タイプ "news" のアーカイブページの場合
-//   if ( $query->is_post_type_archive('news') ) {
-//       $query->set( 'posts_per_page', 12 );
-//       return;
-//   }
-
-//   // カスタム投稿タイプ "achievements" のアーカイブページの場合
-//   if ( $query->is_post_type_archive('achievements') ) {
-//       $query->set( 'posts_per_page', 12 );
-//       return;
-//   }
-
-//   // タクソノミー "news_category" のアーカイブページの場合
-//   if ( $query->is_tax('news_category') ) {
-//       $query->set( 'posts_per_page', 12 );
-//       return;
-//   }
-// }
-// add_action( 'pre_get_posts', 'change_posts_per_page' );
-
-
-/***********************************************************
-* Options Page
-***********************************************************/
-// if( function_exists('acf_add_options_page') ) {
-//   acf_add_options_page(array(
-//     'page_title' 	=> 'RECRUIT - 数字でみる',
-//     'menu_title'	=> 'RECRUIT - 数字でみる',
-//     'menu_slug' 	=> 'top-data',
-//     'capability'	=> 'edit_posts',
-//     'redirect'		=> false
-//   ));
-// }
-
-
-
-
-
-
-
-
 
 
 /**
@@ -183,31 +135,90 @@ add_action('admin_enqueue_scripts', function($hook){
 /// ============================
 /// 固定営業時間（30分刻み）
 /// ============================
-const SALON_OPEN  = '09:00';
-const SALON_CLOSE = '19:30';
-const SALON_STEP  = 30; // minutes
+/** ============================================
+ * 営業時間設定を「店舗設定」から動的に取得する
+ * ============================================ */
 
-/** 30分刻みの時刻配列 */
-function salon_time_slots($from = SALON_OPEN, $to = SALON_CLOSE, $step = SALON_STEP){
-    $out = []; $t = strtotime($from); $end = strtotime($to);
-    while ($t <= $end){ $out[] = date('H:i', $t); $t += $step * 60; }
-    return $out;
+/** 営業時間などを取得するヘルパー */
+function salon_get_store_settings() {
+  $defaults = [
+      'open_time'  => '09:00',
+      'close_time' => '19:30',
+      'time_step'  => 30,
+      'holidays'   => [],
+  ];
+  $opt = get_option('salon_store_settings', []);
+  return wp_parse_args($opt, $defaults);
 }
-function salon_time_to_min($hhmm){ if(!$hhmm) return null; [$h,$m]=array_map('intval',explode(':',$hhmm)); return $h*60+$m; }
-function salon_between($time,$start,$end){ $t=salon_time_to_min($time); $s=salon_time_to_min($start); $e=salon_time_to_min($end); if($t===null||$s===null||$e===null) return false; return ($t>=$s)&&($t<$e); }
+
+/** 営業時間に基づく時刻配列（動的対応） */
+function salon_time_slots($from = null, $to = null, $step = null){
+  $s = salon_get_store_settings();
+  $from = $from ?: $s['open_time'];
+  $to   = $to   ?: $s['close_time'];
+  $step = $step ?: intval($s['time_step']);
+
+  $out = [];
+  $t = strtotime($from); 
+  $end = strtotime($to);
+  while ($t <= $end) {
+      $out[] = date('H:i', $t);
+      $t += $step * 60;
+  }
+  return $out;
+}
+
+/** 時刻→分に変換 */
+function salon_time_to_min($hhmm){ 
+  if(!$hhmm) return null; 
+  [$h,$m] = array_map('intval', explode(':', $hhmm)); 
+  return $h * 60 + $m; 
+}
+
+/** 指定時刻が範囲内かチェック */
+function salon_between($time, $start, $end){ 
+  $t = salon_time_to_min($time); 
+  $s = salon_time_to_min($start); 
+  $e = salon_time_to_min($end); 
+  if($t===null||$s===null||$e===null) return false; 
+  return ($t >= $s) && ($t < $e); 
+}
 
 /** 出勤メタキー（YYYYMM） */
-function salon_shift_meta_key($ym){ return 'salon_shift_'.$ym; }
-/** 旧: 数値配列→OPEN〜CLOSEに正規化 */
-function salon_upgrade_days_to_ranges($days, $ym){
-    $out=[]; foreach((array)$days as $d){ $d=(int)$d; if($d>=1&&$d<=31){ $out[$d]=['s'=>SALON_OPEN,'e'=>SALON_CLOSE]; } } return $out;
+function salon_shift_meta_key($ym){ 
+  return 'salon_shift_'.$ym; 
 }
+
+/** 旧: 数値配列→OPEN〜CLOSEに正規化（店舗設定連動） */
+function salon_upgrade_days_to_ranges($days, $ym){
+  $store = salon_get_store_settings();
+  $open  = $store['open_time'];
+  $close = $store['close_time'];
+  $out = [];
+  foreach ((array)$days as $d){ 
+      $d = (int)$d; 
+      if($d >= 1 && $d <= 31){ 
+          $out[$d] = ['s' => $open, 'e' => $close]; 
+      } 
+  } 
+  return $out;
+}
+
 /** 保存形式正規化 day => ['s'=>'HH:MM','e'=>'HH:MM'] */
-function salon_normalize_shift_meta($raw,$ym){
-    if(!$raw) return [];
-    if(array_values($raw)===$raw && is_int(reset($raw))){ return salon_upgrade_days_to_ranges($raw,$ym); }
-    $out=[]; foreach((array)$raw as $day=>$pair){ $s=$pair['s']??''; $e=$pair['e']??''; if($s&&$e&&salon_time_to_min($e)>salon_time_to_min($s)){ $out[(int)$day]=['s'=>$s,'e'=>$e]; } }
-    return $out;
+function salon_normalize_shift_meta($raw, $ym){
+  if(!$raw) return [];
+  if(array_values($raw) === $raw && is_int(reset($raw))){ 
+      return salon_upgrade_days_to_ranges($raw, $ym); 
+  }
+  $out = [];
+  foreach ((array)$raw as $day => $pair){ 
+      $s = $pair['s'] ?? ''; 
+      $e = $pair['e'] ?? ''; 
+      if($s && $e && salon_time_to_min($e) > salon_time_to_min($s)){ 
+          $out[(int)$day] = ['s' => $s, 'e' => $e]; 
+      } 
+  }
+  return $out;
 }
 
 /* =========================================================
@@ -547,50 +558,120 @@ add_action('init', function () {
  * 保存先：user_meta「salon_menu_settings」
  * =======================================================*/
 function salon_staff_menu_settings_fields($user) {
-    if (!in_array('salon_staff', (array)$user->roles)) return;
-    $menus = rsrv_get_menu_master(); $saved = get_user_meta($user->ID,'salon_menu_settings',true) ?: [];
-    echo '<h2>施術メニュー設定</h2><table class="form-table">';
-    foreach ($menus as $key => $v){
-        $label=$v['label']; $def=$v['dur']; $enabled=$saved[$key]['enabled']??0; $duration=$saved[$key]['duration']??$def;
-        echo '<tr><th><label>'.esc_html($label).'</label></th><td>';
-        echo '<label><input type="checkbox" name="salon_menu_enabled['.esc_attr($key).']" value="1" '.checked($enabled,1,false).'> 対応可</label> ';
-        echo '<select name="salon_menu_duration['.esc_attr($key).']">';
-        for($m=30;$m<=180;$m+=30) echo '<option value="'.$m.'" '.selected($duration,$m,false).'>'.$m.' 分</option>';
-        echo '</select></td></tr>';
-    }
-    echo '</table>';
+  if (!in_array('salon_staff', (array)$user->roles) && !current_user_can('manage_options')) return;
+
+  // 店舗設定からメニュー取得
+  $store = get_option('salon_store_settings', []);
+  $menus = $store['menus'] ?? [];
+
+  // スタッフの保存データ取得
+  $saved = get_user_meta($user->ID, 'salon_menu_settings', true) ?: [];
+
+  echo '<h2>施術メニュー設定</h2>';
+
+  if (empty($menus)) {
+      echo '<p style="color:#666;">※ 店舗設定でメニューを追加してください。</p>';
+      return;
+  }
+
+  echo '<table class="form-table">';
+  foreach ($menus as $menu) {
+      $key = $menu['name'];
+      $price = intval($menu['price']);
+      $enabled = $saved[$key]['enabled'] ?? 0;
+      $duration = $saved[$key]['duration'] ?? 60; // デフォルト60分
+
+      echo '<tr>';
+      echo '<th><label>'.esc_html($key).'</label><br><small style="color:#666;">（¥'.number_format($price).'）</small></th>';
+      echo '<td>';
+      echo '<label><input type="checkbox" name="salon_menu_enabled['.esc_attr($key).']" value="1" '.checked($enabled,1,false).'> 対応可</label> ';
+      echo '<select name="salon_menu_duration['.esc_attr($key).']">';
+      for ($m=30; $m<=180; $m+=15) {
+          echo '<option value="'.$m.'" '.selected($duration,$m,false).'>'.$m.' 分</option>';
+      }
+      echo '</select>';
+      echo '</td>';
+      echo '</tr>';
+  }
+  echo '</table>';
 }
 add_action('show_user_profile','salon_staff_menu_settings_fields');
 add_action('edit_user_profile','salon_staff_menu_settings_fields');
 
+
 function salon_save_staff_menu_settings($user_id) {
-    if (!current_user_can('edit_user', $user_id)) return;
-    $enabled  = $_POST['salon_menu_enabled']  ?? [];
-    $duration = $_POST['salon_menu_duration'] ?? [];
-    $menus = rsrv_get_menu_master(); $save = [];
-    foreach ($menus as $key => $v) $save[$key] = ['enabled'=>isset($enabled[$key])?1:0,'duration'=> isset($duration[$key])?intval($duration[$key]):$v['dur']];
-    update_user_meta($user_id, 'salon_menu_settings', $save);
+  if (!current_user_can('edit_user', $user_id)) return;
+
+  $enabled  = $_POST['salon_menu_enabled']  ?? [];
+  $duration = $_POST['salon_menu_duration'] ?? [];
+
+  // 店舗設定メニューをベースに保存
+  $store = get_option('salon_store_settings', []);
+  $menus = $store['menus'] ?? [];
+  $save = [];
+
+  foreach ($menus as $menu) {
+      $key = $menu['name'];
+      $save[$key] = [
+          'enabled'  => isset($enabled[$key]) ? 1 : 0,
+          'duration' => isset($duration[$key]) ? intval($duration[$key]) : 60
+      ];
+  }
+
+  update_user_meta($user_id, 'salon_menu_settings', $save);
 }
 add_action('personal_options_update','salon_save_staff_menu_settings');
 add_action('edit_user_profile_update','salon_save_staff_menu_settings');
+
 
 /* =========================================================
  * Ajax：フロント用
  * =======================================================*/
 
-/** メニューに対応できるスタッフ（指名候補） */
-add_action('wp_ajax_nopriv_salon_get_staffs_by_menu_front','salon_get_staffs_by_menu_front');
-add_action('wp_ajax_salon_get_staffs_by_menu_front','salon_get_staffs_by_menu_front');
-function salon_get_staffs_by_menu_front(){
+// =======================================
+// Ajax: メニューに対応できるスタッフを取得（本番用）
+// =======================================
+add_action('wp_ajax_salon_get_staffs_by_menu_front', 'salon_get_staffs_by_menu_front');
+add_action('wp_ajax_nopriv_salon_get_staffs_by_menu_front', 'salon_get_staffs_by_menu_front');
+
+function salon_get_staffs_by_menu_front() {
+  // フロントから送信されたメニューキーを取得
   $menu_key = sanitize_text_field($_POST['menu_key'] ?? '');
-  if(!$menu_key) wp_send_json([]);
-  $staffs = salon_get_staff_users(); $out=['0'=>'指名なし'];
-  foreach($staffs as $u){
-    $settings = get_user_meta($u->ID, 'salon_menu_settings', true) ?: [];
-    if(!empty($settings[$menu_key]['enabled'])) $out[(string)$u->ID] = $u->display_name;
+  if (!$menu_key) {
+    wp_send_json(['0' => '指名なし']);
+    return;
   }
-  wp_send_json($out);
+
+  // 🔸 すべてのユーザー（管理者・スタッフなど全員）を対象
+  $users = get_users(['fields' => ['ID', 'display_name']]);
+
+  $list = [];
+  foreach ($users as $u) {
+    // 各ユーザーの施術メニュー設定を取得
+    $settings = get_user_meta($u->ID, 'salon_menu_settings', true);
+    if (empty($settings) || !is_array($settings)) continue;
+
+    // メニュー名が一致し、enabled=1 のスタッフのみを抽出
+    foreach ($settings as $label => $data) {
+      $label_normalized = trim(mb_convert_encoding($label, 'UTF-8', 'auto'));
+      $menu_key_normalized = trim(mb_convert_encoding($menu_key, 'UTF-8', 'auto'));
+
+      if ($label_normalized === $menu_key_normalized && !empty($data['enabled']) && (int)$data['enabled'] === 1) {
+        $list[$u->ID] = $u->display_name;
+      }
+    }
+  }
+
+  // 「指名なし」を先頭に追加
+  $list = ['0' => '指名なし'] + $list;
+
+  wp_send_json($list);
 }
+
+
+
+
+
 
 /** 指名なし用：空いている対応可スタッフを選ぶ */
 function rsrv_pick_staff_for($menu_key, $date, $time){
@@ -632,185 +713,34 @@ function rsrv_pick_staff_for($menu_key, $date, $time){
   return $cands[0] ?? 0; // 最初の人
 }
 
-/** カレンダーHTML生成（1週間／メニュー必須／スタッフ0=指名なし） */
-function salon_generate_calendar_html($menu_key, $staff_id, $week = 0){
-  date_default_timezone_set('Asia/Tokyo');
-
-  // 「今週の月曜」を明示的に固定（現在時刻に依存しない）
-  $today = strtotime(date('Y-m-d')); 
-  $monday = strtotime('monday this week', $today);
-
-  // week単位でずらす
-  $start = strtotime("+".(7 * intval($week))." days", $monday);
-
-  // デバッグ出力
-  // error_log("[SALON DEBUG] week={$week}, start=" . date('Y-m-d', $start));
-
-  $week_dates = [];
-  for ($i = 0; $i < 7; $i++) {
-    $week_dates[] = date('Y-m-d', strtotime("+$i day", $start));
-  }
-
-  // ▼ 時間スロット取得
-  $times = salon_time_slots();
-
-  // ▼ 対象スタッフ取得
-  $staff_pool = [];
-  if ($staff_id > 0) {
-    $u = get_userdata($staff_id);
-    if ($u) $staff_pool = [$u];
-  } else {
-    $staff_pool = salon_get_staff_users();
-  }
-
-  // ▼ 予約データ取得
-  $booked = [];
-  foreach ($staff_pool as $u) {
-    $posts = get_posts([
-      'post_type' => 'reservation',
-      'post_status' => 'any',
-      'numberposts' => -1,
-      'meta_query' => [
-        ['key' => 'res_staff', 'value' => $u->ID, 'compare' => '='],
-        ['key' => 'res_date', 'value' => $week_dates, 'compare' => 'IN'],
-      ],
-    ]);
-    foreach ($posts as $p) {
-      $d = get_post_meta($p->ID, 'res_date', true);
-      $t = get_post_meta($p->ID, 'res_time', true);
-      $m = get_post_meta($p->ID, 'res_menu', true);
-      if (!$d || !$t || !$m) continue;
-      $settings = get_user_meta($u->ID, 'salon_menu_settings', true) ?: [];
-      $dur = intval($settings[$m]['duration'] ?? rsrv_menu_default_duration($m));
-      $ts = strtotime("$d $t"); 
-      $te = $ts + ($dur * 60);
-      for ($x = $ts; $x < $te; $x += (SALON_STEP * 60)) {
-        $key = date('H:i', $x);
-        $booked[$d][$key][$u->ID] = true;
-      }
-    }
-  }
-
-  // ▼ 出勤情報取得
-  $shifts = [];
-  foreach ($staff_pool as $u) {
-    $shifts[$u->ID] = [];
-    $ym_keys = [];
-    foreach ($week_dates as $d) {
-      $ym_keys[date('Ym', strtotime($d))] = true;
-    }
-    foreach (array_keys($ym_keys) as $ym) {
-      $raw = get_user_meta($u->ID, salon_shift_meta_key($ym), true);
-      $norm = salon_normalize_shift_meta((array)$raw, $ym);
-      $y = (int)substr($ym, 0, 4);
-      $m = (int)substr($ym, 4, 2);
-      foreach ($norm as $day => $pair) {
-        $date = sprintf('%04d-%02d-%02d', $y, $m, (int)$day);
-        $shifts[$u->ID][$date] = $pair;
-      }
-    }
-  }
-
-  // ▼ カレンダーHTML出力
-  ob_start(); ?>
-  <div class="salon-calendar">
-    <h3 class="cal-title">空き状況（1週間）</h3>
-    <div class="cal-legend"><span>○：予約可</span><span>×：不可</span></div>
-    <table class="calendar-table">
-      <thead>
-        <tr>
-          <th class="time-col"></th>
-          <?php foreach ($week_dates as $d): ?>
-            <th><?= esc_html(date('n/j (D)', strtotime($d))) ?></th>
-          <?php endforeach; ?>
-        </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($times as $time): ?>
-          <tr>
-            <th class="time-col"><?= esc_html($time) ?></th>
-            <?php foreach ($week_dates as $d): ?>
-              <?php
-              $available = false; 
-              $chosen_staff = 0;
-
-              if ($staff_id > 0) {
-                // 指名あり
-                $u = $staff_pool[0] ?? null;
-                if ($u) {
-                  $shift = $shifts[$u->ID][$d] ?? null;
-                  if ($shift && salon_between($time, $shift['s'], $shift['e']) && empty($booked[$d][$time][$u->ID])) {
-                    $settings = get_user_meta($u->ID, 'salon_menu_settings', true) ?: [];
-                    $dur = intval($settings[$menu_key]['duration'] ?? rsrv_menu_default_duration($menu_key));
-                    $ok = true;
-                    $ts = strtotime("$d $time");
-                    $te = $ts + ($dur * 60);
-                    for ($x = $ts; $x < $te; $x += (SALON_STEP * 60)) {
-                      $kk = date('H:i', $x);
-                      if (!salon_between($kk, $shift['s'], $shift['e']) || !empty($booked[$d][$kk][$u->ID])) {
-                        $ok = false;
-                        break;
-                      }
-                    }
-                    if ($ok) { $available = true; $chosen_staff = $u->ID; }
-                  }
-                }
-              } else {
-                // 指名なし
-                foreach ($staff_pool as $u) {
-                  $settings = get_user_meta($u->ID, 'salon_menu_settings', true) ?: [];
-                  if (empty($settings[$menu_key]['enabled'])) continue;
-                  $shift = $shifts[$u->ID][$d] ?? null;
-                  if (!$shift || !salon_between($time, $shift['s'], $shift['e'])) continue;
-                  $dur = intval($settings[$menu_key]['duration'] ?? rsrv_menu_default_duration($menu_key));
-                  $ok = true;
-                  $ts = strtotime("$d $time");
-                  $te = $ts + ($dur * 60);
-                  for ($x = $ts; $x < $te; $x += (SALON_STEP * 60)) {
-                    $kk = date('H:i', $x);
-                    if (!salon_between($kk, $shift['s'], $shift['e']) || !empty($booked[$d][$kk][$u->ID])) {
-                      $ok = false; break;
-                    }
-                  }
-                  if ($ok) { $available = true; $chosen_staff = $u->ID; break; }
-                }
-              }
-              ?>
-              <td class="cell <?= $available ? 'available' : 'off' ?>">
-                <?php if ($available): ?>
-                  <button class="slot-btn" 
-                          data-date="<?= esc_attr($d) ?>" 
-                          data-time="<?= esc_attr($time) ?>" 
-                          data-staff="<?= (int)$chosen_staff ?>">○</button>
-                <?php else: ?>
-                  ×
-                <?php endif; ?>
-              </td>
-            <?php endforeach; ?>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-  <?php return ob_get_clean();
-}
 
 
 /** Ajax：カレンダー描画 */
 add_action('wp_ajax_salon_render_calendar_front','salon_render_calendar_front');
 add_action('wp_ajax_nopriv_salon_render_calendar_front','salon_render_calendar_front');
 
-function salon_render_calendar_front(){
-  // ▼ weekパラメータの受け取りとログ出力
-  $week = isset($_POST['week']) ? intval($_POST['week']) : 0;
-  $menu  = sanitize_text_field($_POST['menu'] ?? '');
-  $staff = intval($_POST['staff'] ?? 0);
-  if(!$menu) wp_die('メニュー未選択');
+function salon_render_calendar_front() {
+  date_default_timezone_set('Asia/Tokyo');
 
-  // ▼ カレンダーHTML生成関数に week を渡すように修正
-  echo salon_generate_calendar_html($menu, $staff, $week);
+  error_log("=== salon_render_calendar_front 実行 ===");
+  error_log(print_r($_POST, true));
+
+  $menu  = sanitize_text_field($_POST['menu'] ?? '');
+  // ←★ intvalだと空文字も0になるため、「空ならnull」扱いにする
+  $staff = isset($_POST['staff']) && $_POST['staff'] !== '' ? intval($_POST['staff']) : null;
+  $week  = intval($_POST['week'] ?? 0);
+  $mode  = sanitize_text_field($_POST['mode'] ?? 'front');
+
+  error_log("=== salon_render_calendar_front 実行 mode={$mode} week={$week} staff={$staff}");
+
+  // ✅ nullを渡すときに「スタッフ指定なし」と区別される
+  $html = salon_generate_calendar_html($menu, $staff, $week, $mode);
+
+  echo $html;
   wp_die();
 }
+
+
 
 
 /** Ajax：予約登録（フロント） */
@@ -905,6 +835,67 @@ function salon_customer_reserve(){
   wp_send_json(['ok'=>true,'msg'=>'ご予約を受け付けました！']);
 }
 
+// =======================================
+// スタッフが指定日時に空いているか判定
+// =======================================
+function salon_is_staff_available($staff_id, $date, $time) {
+  date_default_timezone_set('Asia/Tokyo');
+
+  // 店舗設定取得
+  $store     = salon_get_store_settings();
+  $holidays  = $store['holidays'] ?? [];
+  $time_step = intval($store['time_step'] ?? 30);
+
+  // 定休日チェック
+  $w = date('w', strtotime($date));
+  if (in_array((string)$w, $holidays, true)) return false;
+
+  // 出勤情報チェック
+  $ym = date('Ym', strtotime($date));
+  $shift_meta = get_user_meta($staff_id, salon_shift_meta_key($ym), true);
+  $shift_norm = salon_normalize_shift_meta((array)$shift_meta, $ym);
+  $shift = $shift_norm[date('j', strtotime($date))] ?? null;
+  if (empty($shift)) return false;
+
+  $s = salon_time_to_min($shift['s']);
+  $e = salon_time_to_min($shift['e']);
+  $t = salon_time_to_min($time);
+
+  // 出勤時間外ならfalse
+  if ($t < $s || $t >= $e) return false;
+
+  // 予約重複チェック
+  $q = new WP_Query([
+    'post_type'      => 'reservation',
+    'post_status'    => 'any',
+    'posts_per_page' => -1,
+    'meta_query'     => [
+      ['key' => 'res_date', 'value' => $date],
+      ['key' => 'res_staff', 'value' => $staff_id],
+    ],
+  ]);
+  if ($q->have_posts()) {
+    while ($q->have_posts()) { $q->the_post();
+      $pid  = get_the_ID();
+      $t2   = get_post_meta($pid, 'res_time', true);
+      $menu = get_post_meta($pid, 'res_menu', true);
+      $settings = get_user_meta($staff_id, 'salon_menu_settings', true) ?: [];
+      $dur = intval($settings[$menu]['duration'] ?? 60);
+      $start_ts = strtotime("$date $t2");
+      $end_ts   = $start_ts + ($dur * 60);
+      $chk_ts   = strtotime("$date $time");
+      if ($chk_ts >= $start_ts && $chk_ts < $end_ts) {
+        wp_reset_postdata();
+        return false; // 重複してる
+      }
+    }
+    wp_reset_postdata();
+  }
+
+  return true;
+}
+
+
 
 /* === メールアドレスカラム追加 === */
 add_filter('manage_edit-reservation_columns', function ($columns) {
@@ -943,164 +934,20 @@ add_action('manage_reservation_posts_custom_column', function ($column, $post_id
  * - ○=シフト内＆未予約 / ×=予約あり / —=シフト外
  * - クリック不可
  * ============================================ */
-add_action('wp_ajax_salon_render_calendar_public_readonly','salon_render_calendar_public_readonly');
-add_action('wp_ajax_nopriv_salon_render_calendar_public_readonly','salon_render_calendar_public_readonly');
+add_action('wp_ajax_salon_render_calendar_public_readonly', 'salon_render_calendar_public_readonly');
+add_action('wp_ajax_nopriv_salon_render_calendar_public_readonly', 'salon_render_calendar_public_readonly');
 
-function salon_render_calendar_public_readonly(){
+function salon_render_calendar_public_readonly() {
   $week = intval($_POST['week'] ?? 0);
-  echo salon_generate_readonly_calendar($week);
+
+  // ▼ 定休日対応カレンダー関数を呼び出し
+  echo salon_generate_calendar_html('', 0, $week, 'preview');
+
   wp_die();
 }
 
-function salon_generate_readonly_calendar($week_shift = 0){
-  date_default_timezone_set('Asia/Tokyo');
 
-  // 週の開始：本日（質問Q1の要望どおり「現在が一番左」）
-  $start_base = strtotime('today');
-  if($week_shift !== 0){
-    $start_base = strtotime(($week_shift>0?"+$week_shift week":"$week_shift week"), $start_base);
-  }
 
-  // 7日ぶん
-  $week_dates = [];
-  for($i=0;$i<7;$i++) $week_dates[] = date('Y-m-d', strtotime("+$i day", $start_base));
-
-  $times = salon_time_slots();
-
-  // スタッフ一覧
-  $staff_users = salon_get_staff_users(); // fields: ID, display_name, user_login
-  $staff_name_map = [];
-  foreach($staff_users as $u) $staff_name_map[$u->ID] = $u->display_name;
-
-  // 1週間ぶんの「その日に出勤しているスタッフリスト」
-  $day_staffs = []; // [$date] = [staff_id,...]
-  foreach($week_dates as $d){
-    $ym  = date('Ym', strtotime($d));
-    $day = (int)date('d', strtotime($d));
-    $list = [];
-    foreach($staff_users as $u){
-      $raw  = get_user_meta($u->ID, salon_shift_meta_key($ym), true);
-      $norm = salon_normalize_shift_meta((array)$raw, $ym);
-      if(!empty($norm[$day])) $list[] = $u->ID;
-    }
-    $day_staffs[$d] = $list; // 出勤者のみ
-  }
-
-  // 予約を集計（施術時間ぶんブロック）
-  $booked = []; // [$date][$H:i][$staff_id] = true
-  $q = new WP_Query([
-    'post_type'      => 'reservation',
-    'post_status'    => 'any',
-    'posts_per_page' => -1,
-    'meta_query'     => [
-      ['key'=>'res_date','value'=>$week_dates,'compare'=>'IN']
-    ]
-  ]);
-  if($q->have_posts()){
-    while($q->have_posts()){ $q->the_post();
-      $pid  = get_the_ID();
-      $date = get_post_meta($pid,'res_date',true);
-      $time = get_post_meta($pid,'res_time',true);
-      $stfv = get_post_meta($pid,'res_staff',true);
-      if(!$date || !$time) continue;
-
-      // スタッフID化（後方互換：display_name保存だった時のため）
-      $sid = 0;
-      if(is_numeric($stfv)) $sid = intval($stfv);
-      else {
-        foreach($staff_users as $u){ if($u->display_name === $stfv){ $sid=$u->ID; break; } }
-      }
-      if(!$sid) continue;
-
-      $menu = get_post_meta($pid,'res_menu',true);
-      $settings = get_user_meta($sid,'salon_menu_settings',true) ?: [];
-      $dur = intval($settings[$menu]['duration'] ?? rsrv_menu_default_duration($menu));
-
-      $ts = strtotime("$date $time"); $te = $ts + ($dur * 60);
-      for($t=$ts; $t<$te; $t += (SALON_STEP*60)){
-        $k = date('H:i', $t);
-        $booked[$date][$k][$sid] = true;
-      }
-    }
-    wp_reset_postdata();
-  }
-
-  // 当日ごとのシフト（範囲参照用）
-  $shift_map = []; // [$sid][$date] = ['s'=>'HH:MM','e'=>'HH:MM']
-  foreach($staff_users as $u){
-    $shift_map[$u->ID] = [];
-    $ym_keys = [];
-    foreach($week_dates as $d) $ym_keys[ date('Ym', strtotime($d)) ] = true;
-    foreach(array_keys($ym_keys) as $ym){
-      $raw = get_user_meta($u->ID, salon_shift_meta_key($ym), true);
-      $norm= salon_normalize_shift_meta((array)$raw, $ym);
-      $y=(int)substr($ym,0,4); $m=(int)substr($ym,4,2);
-      foreach($norm as $day=>$pair){
-        $date = sprintf('%04d-%02d-%02d', $y, $m, (int)$day);
-        $shift_map[$u->ID][$date] = $pair;
-      }
-    }
-  }
-
-  // 出力
-  $week_days = ['日','月','火','水','木','金','土'];
-  ob_start(); ?>
-  <table class="calendar-table">
-    <thead>
-    <tr>
-      <th class="time-col"></th>
-      <?php foreach($week_dates as $d): $w = $week_days[(int)date('w', strtotime($d))]; $cnt = max(1, count($day_staffs[$d])); ?>
-        <th class="day-group" colspan="<?php echo (int)$cnt; ?>">
-          <?php echo esc_html(date('n/j', strtotime($d))); ?>（<?php echo esc_html($w); ?>）
-        </th>
-      <?php endforeach; ?>
-    </tr>
-    <tr>
-      <th class="time-col"></th>
-      <?php foreach($week_dates as $d):
-        $cols = $day_staffs[$d];
-        if(!$cols){ echo '<th class="staff-col">出勤なし</th>'; continue; }
-        $last = end($cols);
-        foreach($cols as $sid){
-          $cls = ($sid===$last)?'staff-col sep':'staff-col';
-          echo '<th class="'.$cls.'">'. esc_html($staff_name_map[$sid] ?? '—') .'</th>';
-        }
-      endforeach; ?>
-    </tr>
-    </thead>
-    <tbody>
-    <?php foreach($times as $time): ?>
-      <tr>
-        <th class="time-col"><?php echo esc_html($time); ?></th>
-        <?php foreach($week_dates as $d):
-          $cols = $day_staffs[$d];
-          if(!$cols){
-            // 出勤者ゼロ日のダミー1列
-            echo '<td class="cell off">—</td>';
-            continue;
-          }
-          $last = end($cols);
-          foreach($cols as $sid):
-            $shift = $shift_map[$sid][$d] ?? null;
-            $within= $shift ? salon_between($time, $shift['s'], $shift['e']) : false;
-            $isBooked = !empty($booked[$d][$time][$sid]);
-
-            $cls = 'off'; $mark='—';
-            if($within){
-              if($isBooked){ $cls='booked'; $mark='×'; }
-              else { $cls='available'; $mark='○'; }
-            }
-            $sep = ($sid===$last) ? ' sep' : '';
-            echo '<td class="cell '.$cls.$sep.'">'. $mark .'</td>';
-          endforeach;
-        endforeach; ?>
-      </tr>
-    <?php endforeach; ?>
-    </tbody>
-  </table>
-  <?php
-  return ob_get_clean();
-}
 
 
 
@@ -1111,3 +958,583 @@ add_action('wp_enqueue_scripts', function() {
     'url' => admin_url('admin-ajax.php'),
   ]);
 });
+
+
+/* =========================================================
+ * 店舗設定にメニュー追加機能を実装
+ * =======================================================*/
+add_action('admin_menu', function() {
+  add_menu_page(
+    '店舗設定',
+    '店舗設定',
+    'manage_options',
+    'salon-store-settings',
+    'salon_render_store_settings_page',
+    'dashicons-store',
+    25
+  );
+});
+
+function salon_render_store_settings_page() {
+  if (!current_user_can('manage_options')) return;
+
+  // 保存処理
+  if (isset($_POST['salon_store_save'])) {
+    check_admin_referer('salon_store_save_action');
+
+    $open  = sanitize_text_field($_POST['open_time'] ?? '');
+    $close = sanitize_text_field($_POST['close_time'] ?? '');
+    $step  = intval($_POST['time_step'] ?? 30);
+    $holidays = array_map('sanitize_text_field', $_POST['holidays'] ?? []);
+
+    // ▼ メニューを保存（名前・価格）
+    $menu_names  = $_POST['menu_name'] ?? [];
+    $menu_prices = $_POST['menu_price'] ?? [];
+    $menus = [];
+    foreach ($menu_names as $i => $name) {
+      $name = trim(sanitize_text_field($name));
+      if ($name === '') continue;
+      $menus[] = [
+        'name'  => $name,
+        'price' => intval($menu_prices[$i] ?? 0)
+      ];
+    }
+
+    $data = [
+      'open_time'  => $open,
+      'close_time' => $close,
+      'time_step'  => $step,
+      'holidays'   => $holidays,
+      'menus'      => $menus, // ← 追加！
+    ];
+
+    update_option('salon_store_settings', $data);
+    echo '<div class="notice notice-success is-dismissible"><p>保存しました ✅</p></div>';
+  }
+
+  $settings = get_option('salon_store_settings', [
+    'open_time'  => '09:00',
+    'close_time' => '19:30',
+    'time_step'  => 30,
+    'holidays'   => [],
+    'menus'      => [],
+  ]);
+  $weekdays = ['日','月','火','水','木','金','土'];
+  ?>
+  <div class="wrap">
+    <h1>店舗設定</h1>
+    <form method="post">
+      <?php wp_nonce_field('salon_store_save_action'); ?>
+      <table class="form-table">
+        <tr>
+          <th>営業時間</th>
+          <td>
+            <input type="time" name="open_time" value="<?php echo esc_attr($settings['open_time']); ?>"> 〜
+            <input type="time" name="close_time" value="<?php echo esc_attr($settings['close_time']); ?>">
+          </td>
+        </tr>
+        <tr>
+          <th>予約間隔（分）</th>
+          <td>
+            <select name="time_step">
+              <?php foreach ([15,30,45,60] as $v): ?>
+                <option value="<?php echo $v; ?>" <?php selected($settings['time_step'], $v); ?>>
+                  <?php echo $v; ?>分刻み
+                </option>
+              <?php endforeach; ?>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <th>定休日</th>
+          <td>
+            <?php foreach ($weekdays as $i => $w): ?>
+              <label><input type="checkbox" name="holidays[]" value="<?php echo $i; ?>" 
+                <?php checked(in_array((string)$i, (array)$settings['holidays'], true)); ?>>
+                <?php echo $w; ?>曜
+              </label>
+            <?php endforeach; ?>
+          </td>
+        </tr>
+
+        <!-- ▼ メニュー入力エリア -->
+        <tr>
+          <th>メニュー設定</th>
+          <td>
+            <div id="menu-list">
+              <?php if (!empty($settings['menus'])): ?>
+                <?php foreach ($settings['menus'] as $m): ?>
+                  <p>
+                    <input type="text" name="menu_name[]" value="<?php echo esc_attr($m['name']); ?>" placeholder="メニュー名">
+                    <input type="number" name="menu_price[]" value="<?php echo esc_attr($m['price']); ?>" placeholder="金額（円）">
+                  </p>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <p>
+                  <input type="text" name="menu_name[]" placeholder="メニュー名">
+                  <input type="number" name="menu_price[]" placeholder="金額（円）">
+                </p>
+              <?php endif; ?>
+            </div>
+            <button type="button" class="button" id="add-menu-row">＋メニューを追加</button>
+
+            <script>
+              jQuery(function($){
+                $('#add-menu-row').on('click', function(){
+                  $('#menu-list').append(
+                    '<p><input type="text" name="menu_name[]" placeholder="メニュー名"> ' +
+                    '<input type="number" name="menu_price[]" placeholder="金額（円）"></p>'
+                  );
+                });
+              });
+            </script>
+          </td>
+        </tr>
+      </table>
+      <?php submit_button('保存', 'primary', 'salon_store_save'); ?>
+    </form>
+  </div>
+  <?php
+}
+
+
+
+/* =========================================================
+ * 予約カレンダー（メニュー・スタッフ連動型）
+ * =======================================================*/
+/* =========================================================
+ * 予約カレンダー（モード別：モーダル or 確認画面）
+ * =======================================================*/
+function salon_generate_calendar_html($menu_key, $staff_id, $week = 0, $mode = 'front') {
+  date_default_timezone_set('Asia/Tokyo');
+
+  // ✅ このすぐ下に入れてOK！
+  error_log('=== salon_generate_calendar_html 実行 ===');
+error_log('menu_key=' . $menu_key . ' staff_id=' . $staff_id . ' week=' . $week);
+error_log('mode=' . $mode); // ←★この1行追加！
+
+  // ▼ 店舗設定（営業時間・定休日・刻み時間）
+  $store     = salon_get_store_settings();
+  $holidays  = $store['holidays'] ?? [];
+  $time_step = intval($store['time_step'] ?? 30);
+
+
+  // ▼ 表示週
+  $today = strtotime('today');
+  $start = strtotime("+".(7 * intval($week))." days", $today);
+  $week_dates = [];
+  for ($i = 0; $i < 7; $i++) $week_dates[] = date('Y-m-d', strtotime("+$i day", $start));
+
+  // ▼ 時間スロット
+  $times = salon_time_slots();
+
+  // ▼ スタッフリスト
+  $staff_pool = [];
+  if ($staff_id > 0) {
+    $u = get_userdata($staff_id);
+    if ($u) $staff_pool = [$u];
+  } else {
+    $staff_pool = salon_get_staff_users();
+  }
+
+  // ▼ 出勤情報
+$shifts = [];
+foreach ($staff_pool as $u) {
+  $shifts[$u->ID] = [];
+  $ym_keys = [];
+  foreach ($week_dates as $d) $ym_keys[date('Ym', strtotime($d))] = true;
+  foreach (array_keys($ym_keys) as $ym) {
+    $raw = get_user_meta($u->ID, salon_shift_meta_key($ym), true);
+    $norm = salon_normalize_shift_meta((array)$raw, $ym);
+    $y = (int)substr($ym, 0, 4);
+    $m = (int)substr($ym, 4, 2);
+    foreach ($norm as $day => $pair) {
+      $date = sprintf('%04d-%02d-%02d', $y, $m, (int)$day);
+      if (in_array($date, $week_dates, true)) $shifts[$u->ID][$date] = $pair;
+    }
+  }
+}
+
+// ✅ デバッグ追加
+error_log('=== シフト情報 ===');
+error_log(print_r($shifts, true));
+
+
+  // ▼ 予約データ取得
+  $booked = [];
+  $q = new WP_Query([
+    'post_type'      => 'reservation',
+    'post_status'    => 'any',
+    'posts_per_page' => -1,
+    'meta_query'     => [
+      ['key' => 'res_date', 'value' => $week_dates, 'compare' => 'IN']
+    ]
+  ]);
+
+  if ($q->have_posts()) {
+    while ($q->have_posts()) { $q->the_post();
+      $pid   = get_the_ID();
+      $date  = get_post_meta($pid, 'res_date', true);
+      $time  = get_post_meta($pid, 'res_time', true);
+      $menu  = get_post_meta($pid, 'res_menu', true);
+      $sid   = intval(get_post_meta($pid, 'res_staff', true));
+      error_log('予約データ: ' . print_r([$date, $time, $sid], true));
+      if (!$date || !$time) continue;
+
+      $settings = get_user_meta($sid, 'salon_menu_settings', true) ?: [];
+      $dur = intval($settings[$menu]['duration'] ?? rsrv_menu_default_duration($menu));
+
+      $start_ts = strtotime("$date $time");
+      $end_ts   = $start_ts + ($dur * 60);
+
+      foreach (salon_time_slots() as $slot_time) {
+        $slot_ts = strtotime("$date $slot_time");
+        if ($slot_ts >= $start_ts && $slot_ts < $end_ts) {
+          $booked[$date][$slot_time][$sid] = true;
+        }
+      }
+    }
+    wp_reset_postdata();
+    error_log('=== 予約配列デバッグ ===');
+error_log(print_r($booked, true));
+  }
+
+  // ▼ HTML出力
+  ob_start(); ?>
+  <div class="salon-calendar">
+    <h3 class="cal-title"><?= $mode === 'preview' ? '予約確認（現状）' : '空き状況（1週間）' ?></h3>
+    <div class="cal-legend">
+      <span>○：予約可</span><span>×：予約不可</span><span>休：定休日</span>
+    </div>
+    <?php if ($mode === 'front'): ?>
+  <div class="calendar-nav" style="text-align:center; margin:10px 0;">
+    <button type="button" class="btn-week" data-week="prev">← 前の週</button>
+    <button type="button" class="btn-week" data-week="today">今週</button>
+    <button type="button" class="btn-week" data-week="next">次の週 →</button>
+  </div>
+  <?php endif; ?>
+
+    <table class="calendar-table">
+      <thead>
+        <tr>
+          <th class="time-col">時間</th>
+          <?php foreach ($week_dates as $d): ?>
+            <th colspan="<?= count($staff_pool) ?>"><?= esc_html(date('n/j (D)', strtotime($d))) ?></th>
+          <?php endforeach; ?>
+        </tr>
+        <tr>
+          <th></th>
+          <?php foreach ($week_dates as $d): foreach ($staff_pool as $u): ?>
+            <th class="staff-name"><?= esc_html($u->display_name) ?></th>
+          <?php endforeach; endforeach; ?>
+        </tr>
+      </thead>
+
+      <tbody>
+        <?php foreach ($times as $time): ?>
+          <tr>
+            <th class="time-col"><?= esc_html($time) ?></th>
+
+            <?php foreach ($week_dates as $d):
+              $w = date('w', strtotime($d));
+              $is_holiday = in_array((string)$w, $holidays, true);
+
+              foreach ($staff_pool as $u):
+                $available = false;
+                $shift = $shifts[$u->ID][$d] ?? null;
+
+                if (!$is_holiday && $shift) {
+                  $s = salon_time_to_min($shift['s']);
+                  $e = salon_time_to_min($shift['e']);
+                  $t = salon_time_to_min($time);
+
+                  if ($t >= $s && $t < $e) {
+                    $available = true;
+
+                    // 施術時間取得
+                    $settings = get_user_meta($u->ID, 'salon_menu_settings', true) ?: [];
+                    $dur = intval($settings[$menu_key]['duration'] ?? 60);
+                    $slot_start_ts = strtotime("$d $time");
+                    $slot_end_ts   = $slot_start_ts + ($dur * 60);
+
+                    // --- デバッグ用: 重複判定ロジック検証 ---
+                    if (!empty($booked[$d])) {
+                      foreach ($booked[$d] as $booked_time => $by_staffs) {
+                        foreach ($by_staffs as $sid => $flag) {
+                          if ($sid !== $u->ID) continue;
+                    
+                          $booked_start = strtotime("$d $booked_time");
+                          $settings = get_user_meta($sid, 'salon_menu_settings', true) ?: [];
+                          $dur = intval($settings[$menu_key]['duration'] ?? rsrv_menu_default_duration($menu_key));
+                          $booked_end   = $booked_start + ($dur * 60);
+                    
+                          $overlap = ($slot_start_ts < $booked_end && $slot_end_ts > $booked_start);
+                          if ($overlap) {
+                            $available = false;
+                            error_log("❌ OVERLAP DETECTED: staff={$sid} time={$time}");
+                            break 2;
+                          }
+                        }
+                      }
+                    }
+                    
+
+                  }
+                }
+
+                // 出力
+                if ($is_holiday): ?>
+                  <td class="cell holiday">休</td>
+                <?php else: ?>
+                  <?php
+                    // ▼ この時間・スタッフに予約が入っているかチェック
+                    // ▼ この時間・スタッフに予約が入っているかチェック
+$isBooked = !empty($booked[$d][$time][$u->ID]);
+
+// ▼ 「予約フォーム」モード専用の前スロットブロック
+if ($mode === 'front' && !$isBooked && !empty($booked[$d])) {
+  foreach ($booked[$d] as $booked_time => $by_staffs) {
+    if (!empty($by_staffs[$u->ID])) {
+      $booked_start = strtotime("$d $booked_time");
+      $settings = get_user_meta($u->ID, 'salon_menu_settings', true) ?: [];
+      $dur = intval($settings[$menu_key]['duration'] ?? rsrv_menu_default_duration($menu_key));
+      $booked_end   = $booked_start + ($dur * 60);
+
+      $slot_ts = strtotime("$d $time");
+
+      // 直前スロットもブロック（30分前）
+      if ($slot_ts >= ($booked_start - ($time_step * 60)) && $slot_ts < $booked_start) {
+        $isBooked = true;
+        error_log("🔸前スロットブロック: {$d} {$time} staff={$u->ID}");
+        break;
+      }
+    }
+  }
+}
+
+                
+                    // ▼ スタッフが出勤時間内か判定
+                    $within = false;
+                    if ($shift && !$is_holiday) {
+                      $s = salon_time_to_min($shift['s']);
+                      $e = salon_time_to_min($shift['e']);
+                      $t = salon_time_to_min($time);
+                      $within = ($t >= $s && $t < $e);
+                    }
+                
+                    // ▼ 判定ロジック
+                    if ($within) {
+                      if ($isBooked) {
+                        $available = false;
+                        $mark = '×';
+                        $cls = 'booked';
+                      } else {
+                        $available = true;
+                        $mark = '○';
+                        $cls = 'available';
+                      }
+                    } else {
+                      $mark = '—';
+                      $cls = 'off';
+                    }
+                  ?>
+                  <td class="cell <?= $cls ?>">
+  <?php if ($available && $mark === '○' && $mode === 'front'): ?>
+    <button class="slot-btn"
+            data-date="<?= esc_attr($d) ?>"
+            data-time="<?= esc_attr($time) ?>"
+            data-staff="<?= (int)$u->ID ?>">
+      ○
+    </button>
+  <?php else: ?>
+    <?= $mark ?>
+  <?php endif; ?>
+</td>
+                <?php endif;
+                
+              endforeach;
+            endforeach; ?>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php
+  return ob_get_clean();
+}
+
+
+
+// =======================================
+// 指名なし用：全スタッフ統合カレンダー
+// =======================================
+function salon_generate_calendar_html_all_staff($menu_key, $week = 0) {
+  date_default_timezone_set('Asia/Tokyo');
+  $store     = salon_get_store_settings();
+  $holidays  = $store['holidays'] ?? [];
+  $time_step = intval($store['time_step'] ?? 30);
+
+  $today = strtotime('today');
+  $start = strtotime("+".(7 * intval($week))." days", $today);
+  $week_dates = [];
+  for ($i = 0; $i < 7; $i++) $week_dates[] = date('Y-m-d', strtotime("+$i day", $start));
+
+  $times  = salon_time_slots();
+  $staffs = salon_get_staff_users(); // 全スタッフ取得
+
+  ob_start(); ?>
+  <div class="salon-calendar">
+    <h3 class="cal-title">空き状況（1週間）</h3>
+    <div class="cal-legend"><span>○：予約可</span><span>×：予約不可</span><span>休：定休日</span></div>
+
+    <table class="calendar-table">
+      <thead>
+        <tr>
+          <th class="time-col">時間</th>
+          <?php foreach ($week_dates as $d): ?>
+            <th><?= esc_html(date('n/j (D)', strtotime($d))) ?></th>
+          <?php endforeach; ?>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($times as $time): ?>
+          <tr>
+            <th class="time-col"><?= esc_html($time) ?></th>
+            <?php foreach ($week_dates as $d):
+              $w = date('w', strtotime($d));
+              $is_holiday = in_array((string)$w, $holidays, true);
+              if ($is_holiday): ?>
+                <td class="cell holiday">休</td>
+              <?php else:
+                $available = false;
+                foreach ($staffs as $u) {
+                  if (salon_is_staff_available($u->ID, $d, $time)) {
+                    $available = true;
+                    break;
+                  }
+                }
+                ?>
+                <td class="cell <?= $available ? 'available' : 'off' ?>">
+                  <?php if ($available): ?>
+                    <button class="slot-btn"
+                            data-date="<?= esc_attr($d) ?>"
+                            data-time="<?= esc_attr($time) ?>"
+                            data-autoassign="1">○</button>
+                  <?php else: ?>×<?php endif; ?>
+                </td>
+              <?php endif;
+            endforeach; ?>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php
+  return ob_get_clean();
+}
+
+
+
+
+/** 店舗設定のメニュー一覧を取得（フォームなど共通利用） */
+function salon_get_menu_master(){
+  $store = get_option('salon_store_settings', []);
+  return $store['menus'] ?? [];
+}
+
+/**
+ * 店舗設定メニューを取得して返す（予約フォーム用）
+ */
+add_action('wp_ajax_nopriv_salon_get_menus_front', 'salon_get_menus_front');
+add_action('wp_ajax_salon_get_menus_front', 'salon_get_menus_front');
+function salon_get_menus_front() {
+  $store = get_option('salon_store_settings', []);
+  $menus = $store['menus'] ?? [];
+
+  $out = [];
+  foreach ($menus as $m) {
+    if (!empty($m['name'])) {
+      $out[] = [
+        'key'   => sanitize_title($m['name']),
+        'label' => sanitize_text_field($m['name']),
+        'price' => intval($m['price'] ?? 0),
+      ];
+    }
+  }
+  wp_send_json($out);
+}
+
+
+
+
+// 保存処理
+function salon_save_staff_menu_field($user_id) {
+  // if (!current_user_can('edit_user', $user_id)) return; // ←ここを修正
+  $menus = array_map('sanitize_text_field', $_POST['salon_staff_menus'] ?? []);
+  update_user_meta($user_id, 'salon_staff_menus', $menus);
+}
+
+
+
+
+add_action('wp_ajax_salon_get_staffs_by_menu_front', function() {
+  $menu_key = sanitize_text_field($_POST['menu_key'] ?? '');
+  error_log('[DEBUG] menu_key=' . $menu_key);
+  $users = get_users(['role__in' => ['administrator', 'author', 'editor']]);
+  foreach ($users as $u) {
+    $settings = get_user_meta($u->ID, 'salon_menu_settings', true);
+    error_log('[DEBUG] user='.$u->user_login.' settings='.print_r($settings,true));
+  }
+  wp_send_json(['debug' => true]);
+});
+
+add_action('wp_ajax_salon_readonly_calendar', 'salon_generate_readonly_calendar');
+add_action('wp_ajax_nopriv_salon_readonly_calendar', 'salon_generate_readonly_calendar');
+
+
+function salon_enqueue_scripts() {
+  wp_enqueue_script(
+    'salon-script',
+    get_template_directory_uri() . '/js/script.js',
+    array('jquery'),
+    null,
+    true
+  );
+
+  // ✅ フロントでも AjaxURL を使えるようにする
+  wp_localize_script('salon-script', 'salon_ajax', array(
+    'url' => admin_url('admin-ajax.php')
+  ));
+}
+add_action('wp_enqueue_scripts', 'salon_enqueue_scripts');
+
+
+/**
+ * ---------------------------------------------------
+ * フロント確認用カレンダー（予約済み反映版）
+ * ---------------------------------------------------
+ */
+function salon_render_readonly_calendar_ajax() {
+  date_default_timezone_set('Asia/Tokyo');
+  error_log('=== salon_render_readonly_calendar_ajax 実行 ===');
+
+  $menu_key = isset($_POST['menu_key']) ? sanitize_text_field($_POST['menu_key']) : '';
+  $week     = isset($_POST['week']) ? intval($_POST['week']) : 0;
+
+  // staff_id は固定で 0 にする（全スタッフ対象）
+  $staff_id = 0;
+
+  if (function_exists('salon_generate_calendar_html')) {
+    $html = salon_generate_calendar_html($menu_key, $staff_id, $week, 'readonly');
+    echo $html;
+  } else {
+    echo '<p>カレンダー生成関数が見つかりません。</p>';
+  }
+
+  wp_die();
+}
+
+add_action('wp_ajax_salon_render_readonly_calendar_ajax', 'salon_render_readonly_calendar_ajax');
+add_action('wp_ajax_nopriv_salon_render_readonly_calendar_ajax', 'salon_render_readonly_calendar_ajax');
+
+
