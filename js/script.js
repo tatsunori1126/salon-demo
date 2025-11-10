@@ -230,7 +230,8 @@ if (slotBtn) {
   
         content.innerHTML = '<p class="loading">読み込み中...</p>';
   
-        fetch(ajaxurl, {
+        // 🔧 キャッシュ無効化のために Date.now() を付与
+        fetch(`${ajaxurl}?_=${Date.now()}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
@@ -243,18 +244,21 @@ if (slotBtn) {
         .then(res => res.text())
         .then(html => {
           content.innerHTML = html;
+          console.log('✅ カレンダーを最新状態で再描画しました');
         })
         .catch(err => {
+          console.error('❌ カレンダー読み込みエラー:', err);
           content.innerHTML = '<p class="error">読み込みに失敗しました。</p>';
         });
       });
     });
   });
   
+  
 
 /**
  * ===============================================
- *  予約確定ボタン処理（完全版）
+ * 予約確定ボタン処理（完了ページ遷移版）
  * ===============================================
  */
 document.addEventListener('DOMContentLoaded', function() {
@@ -267,32 +271,24 @@ document.addEventListener('DOMContentLoaded', function() {
   confirmBtn.addEventListener('click', async (e) => {
     e.preventDefault();
 
-    if (confirmBtn.disabled) return; // ← 二重クリック防止
-
+    if (confirmBtn.disabled) return; // 二重クリック防止
     console.log('✅ 予約確定ボタン押下');
-
-    // ---------- Stepエレメント ----------
-    const step2 = document.querySelector('#step-2');
-    const step3 = document.querySelector('#step-3');
 
     // ---------- 各入力データ取得 ----------
     const fName  = document.querySelector('#your-name') || document.querySelector('#f-name');
     const fEmail = document.querySelector('#your-email') || document.querySelector('#f-email');
     const fTel   = document.querySelector('#your-tel') || document.querySelector('#f-tel');
-
     const menuSelect  = document.querySelector('#m-menu') || document.querySelector('#res_menu') || document.querySelector('#menu_key');
     const selMenuKey  = menuSelect?.value || 'default';
-
     const staffSelect = document.querySelector('#m-staff') || document.querySelector('#res_staff') || document.querySelector('#staff_id');
     const selStaffId  = staffSelect?.value || 0;
-
     const selDateTime = document.getElementById('c-datetime')?.textContent?.trim() || '';
     const [selDate, selTime] = selDateTime.split(' ');
 
     // ---------- salon_ajax 確認 ----------
     if (!salon_ajax || !salon_ajax.url || !salon_ajax.nonce) {
-      console.error('❌ salon_ajax が未定義または nonce が存在しません');
       alert('nonceが正しく読み込まれていません。functions.php を確認してください。');
+      console.error('❌ salon_ajax が未定義または nonce が存在しません');
       return;
     }
 
@@ -310,71 +306,35 @@ document.addEventListener('DOMContentLoaded', function() {
     fd.append('date', selDate);
     fd.append('time', selTime);
 
-    // 一時的に無効化（送信中だけ）
+    // ボタン制御
     confirmBtn.disabled = true;
     confirmBtn.textContent = '送信中...';
 
     try {
       const res = await fetch(salon_ajax.url, { method: 'POST', body: fd });
       const json = await res.json();
-
       console.log('📥 応答:', json);
 
-      // ボタンを戻す（エラー時などに再クリック可能に）
+      // ボタンを元に戻す（エラー時）
       confirmBtn.disabled = false;
       confirmBtn.textContent = 'この内容で確定';
 
       if (json.success) {
-        alert(json.data.msg || 'ご予約を受け付けました！');
+        console.log('✅ 予約成功');
 
-        // ✅ 完全に無効化（予約完了後のみ）
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = '予約済み';
-
-        // ✅ カレンダー再描画
-        const calendarContainer = document.querySelector('.salon-calendar');
-        if (calendarContainer) {
-          fetch(`${location.origin}/wp-admin/admin-ajax.php?action=salon_get_calendar_html&menu_key=${selMenuKey}&staff_id=${selStaffId}`)
-            .then((res) => res.text())
-            .then((html) => {
-              calendarContainer.innerHTML = html;
-              console.log('✅ カレンダー更新完了');
-            })
-            .catch((err) => console.error('❌ カレンダー再取得エラー:', err));
+        // ✅ モーダルを閉じる
+        const modal = document.querySelector('.modal, .p-reservation__modal, .reservation-modal');
+        if (modal) {
+          modal.classList.remove('is-active', 'open', 'show', 'active');
+          modal.style.display = 'none';
+          modal.style.opacity = '0';
+          modal.style.pointerEvents = 'none';
+          modal.style.visibility = 'hidden';
         }
 
-        // ✅ モーダルを自動で閉じる処理（再オープン対応版）
-        try {
-          // ① 閉じるボタンをクリックして閉じる（ライブラリが反応）
-          const closeBtn = document.querySelector(
-            '.modal-close, .js-modal-close, .p-reservation__modal-close, [data-modal-close], .close-btn'
-          );
-          if (closeBtn) {
-            console.log('🕓 閉じるボタンをクリックしてモーダルを閉じます');
-            closeBtn.click();
-          } else {
-            // ② フォールバック：クラス制御のみ（display:none等は操作しない）
-            const modal = document.querySelector('.modal, .p-reservation__modal, .reservation-modal');
-            if (modal) {
-              modal.classList.remove('is-active', 'open', 'show', 'active');
-              modal.style.opacity = '';          // リセット
-              modal.style.pointerEvents = '';    // リセット
-              modal.style.visibility = '';       // リセット
-              modal.style.display = '';          // リセット
-              console.log('✅ モーダルを閉じました（再オープン可能）');
-            } else {
-              console.warn('⚠️ モーダル要素が見つかりませんでした。');
-            }
-          }
-        } catch (err) {
-          console.error('❌ モーダル閉鎖処理でエラー:', err);
-        }
-
-        // ✅ 完了ステップ表示（任意）
-        if (step2 && step3) {
-          step2.style.display = 'none';
-          step3.style.display = 'block';
-        }
+        // ✅ thanksページへ遷移
+        // WordPressの固定ページ「thanks」などを想定
+        window.location.href = `${location.origin}/reservation-thanks/?menu=${encodeURIComponent(selMenuKey)}&date=${encodeURIComponent(selDate)}&time=${encodeURIComponent(selTime)}`;
 
       } else {
         alert(json.data?.msg || 'エラーが発生しました。');
@@ -387,6 +347,48 @@ document.addEventListener('DOMContentLoaded', function() {
       alert('通信エラーが発生しました');
     }
   });
+});
+
+
+document.addEventListener('DOMContentLoaded', () => {
+  // 定期的に最新の更新情報をチェック（3秒おき）
+  setInterval(() => {
+    fetch(ajaxurl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ action: 'salon_get_last_update' })
+    })
+    .then(res => res.json())
+    .then(json => {
+      if (!json.success || !json.data || !json.data.date) return;
+      const data = json.data;
+
+      // カレンダー内で該当セルを探す
+      const dateCell = document.querySelector(
+        `.cal-table th:contains("${data.date.split('-').slice(1).join('/')}")
+        `
+      );
+
+      if (!dateCell) return;
+
+      const table = dateCell.closest('.cal-table');
+      const allRows = table.querySelectorAll('tbody tr');
+
+      allRows.forEach(row => {
+        const timeCell = row.querySelector('th');
+        const time = timeCell ? timeCell.textContent.trim() : '';
+
+        if (time === data.time) {
+          const targetCell = row.querySelector(`td.available, td.booked`);
+          if (targetCell) {
+            targetCell.className = data.staff > 0 ? 'booked' : 'available';
+            targetCell.textContent = data.staff > 0 ? '×' : '○';
+          }
+        }
+      });
+    })
+    .catch(err => console.error('更新チェックエラー:', err));
+  }, 3000);
 });
 
 

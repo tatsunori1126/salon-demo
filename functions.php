@@ -211,7 +211,8 @@ function salon_render_store_settings_page(){
 
     $data=[
       'open_time'=>$open,'close_time'=>$close,'time_step'=>$step,
-      'holidays'=>$holidays,'menus'=>$menus
+      'holidays'=>$holidays,'menus'=>$menus,
+      'nomination_fee' => intval($_POST['nomination_fee'] ?? 0),
     ];
     update_option('salon_store_settings',$data);
 
@@ -249,6 +250,14 @@ function salon_render_store_settings_page(){
             <?php foreach($weekdays as $i=>$w): ?>
               <label><input type="checkbox" name="holidays[]" value="<?=$i?>" <?=checked(in_array((string)$i,(array)$settings['holidays'],true),true,false)?>><?=$w?>曜</label>
             <?php endforeach; ?>
+          </td>
+        </tr>
+
+        <tr>
+          <th>指名料</th>
+          <td>
+            <input type="number" name="nomination_fee" value="<?=esc_attr($settings['nomination_fee'] ?? 0);?>" min="0" step="100"> 円
+            <p class="description">※0円の場合は自動的に指名料なし扱いになります</p>
           </td>
         </tr>
 
@@ -440,13 +449,38 @@ add_action('add_meta_boxes', function(){
 });
 
 /** メタボックスHTML */
+/** メタボックスHTML（出勤・メニュー対応可のみ表示） */
 function salon_reservation_mb($post){
   wp_nonce_field('salon_reservation_save','salon_reservation_nonce');
   $meta=['name','tel','email','date','time','menu','staff'];
   foreach($meta as $m){ $$m = get_post_meta($post->ID, 'res_'.$m, true); }
 
-  $menus = salon_get_store_settings()['menus'] ?? [];
+  $store  = salon_get_store_settings();
+  $menus  = $store['menus'] ?? [];
   $staffs = salon_get_staff_users();
+
+  // --- 日付・時間・メニューが揃っているときだけ条件判定 ---
+  $filtered_staffs = [];
+  if ($date && $time && $menu) {
+    foreach ($staffs as $s) {
+      $uid = $s->ID;
+
+      // ① メニュー対応可？
+      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true) ?: [];
+      $enabled = !empty($menu_settings[$menu]['enabled']);
+
+      // ② 出勤中？
+      $available = salon_is_staff_available($uid, $date, $time);
+
+      if ($enabled && $available) {
+        $filtered_staffs[] = $s;
+      }
+    }
+  } else {
+    // 日時が未選択のときは全員（既存動作維持）
+    $filtered_staffs = $staffs;
+  }
+
   ?>
   <table class="form-table">
     <tr><th>お名前*</th><td><input name="res_name" type="text" value="<?=esc_attr($name)?>" required></td></tr>
@@ -462,20 +496,32 @@ function salon_reservation_mb($post){
       </select></td>
     </tr>
     <tr><th>担当*</th>
-      <td><select name="res_staff" required>
-        <option value="">— 選択 —</option>
-        <option value="0" <?=selected($staff,'0',false)?>>指名なし</option>
-        <?php foreach($staffs as $s): ?>
-          <option value="<?=$s->ID?>" <?=selected($staff,$s->ID,false)?>><?=$s->display_name?></option>
-        <?php endforeach; ?>
-      </select></td>
+      <td>
+        <select name="res_staff" required>
+          <option value="">— 選択 —</option>
+          <option value="0" <?=selected($staff,'0',false)?>>指名なし（自動割当）</option>
+          <?php if (!empty($filtered_staffs)): ?>
+            <?php foreach($filtered_staffs as $s): ?>
+              <option value="<?=$s->ID?>" <?=selected($staff,$s->ID,false)?>><?=$s->display_name?></option>
+            <?php endforeach; ?>
+          <?php else: ?>
+            <option value="">（出勤中スタッフなし）</option>
+          <?php endif; ?>
+        </select>
+      </td>
     </tr>
   </table>
   <?php
 }
 
+
 /** 保存処理 */
 add_action('save_post_reservation', function($post_id){
+  // ✅ 無限ループ防止フラグ
+  if (defined('SALON_SAVE_RUNNING')) return;
+  define('SALON_SAVE_RUNNING', true);
+
+  // ✅ nonce確認
   if(!isset($_POST['salon_reservation_nonce']) || !wp_verify_nonce($_POST['salon_reservation_nonce'],'salon_reservation_save')) return;
   if(defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
 
@@ -483,44 +529,119 @@ add_action('save_post_reservation', function($post_id){
   foreach($fields as $f){
     update_post_meta($post_id, 'res_'.$f, sanitize_text_field($_POST['res_'.$f]??''));
   }
+
   $staff=intval($_POST['res_staff']??0);
   update_post_meta($post_id,'res_staff',$staff);
   update_post_meta($post_id,'res_datetime',($_POST['res_date']??'').' '.($_POST['res_time']??'').':00');
 
-  // タイトル更新
+  // ✅ タイトル更新（再帰防止つき）
+  remove_action('save_post_reservation', __FUNCTION__);
   wp_update_post([
     'ID'=>$post_id,
-    'post_title'=>sprintf('%s %s / %s（%s）',$_POST['res_date'],$_POST['res_time'],$_POST['res_name'],$_POST['res_menu'])
+    'post_title'=>sprintf('%s %s / %s（%s）',
+      $_POST['res_date'],
+      $_POST['res_time'],
+      $_POST['res_name'],
+      $_POST['res_menu']
+    )
   ]);
+  add_action('save_post_reservation', __FUNCTION__);
 },10,1);
+
+// =========================================================
+// 担当変更の安全保存（メモリリーク完全防止版）
+// =========================================================
+add_action('save_post_reservation', function($post_id) {
+  // 自動保存・ゴミ箱・権限チェック回避
+  if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+  if (!current_user_can('edit_post', $post_id)) return;
+
+  // POSTデータが存在しない場合は終了
+  if (!isset($_POST['res_staff'])) return;
+
+  // 現在の担当と変更後の担当を比較
+  $old_staff = intval(get_post_meta($post_id, '_old_res_staff', true));
+  $new_staff = intval($_POST['res_staff']);
+
+  // 担当が変わったときのみ処理
+  if ($new_staff !== $old_staff) {
+    error_log("=== 担当変更 === post_id={$post_id} old={$old_staff} new={$new_staff}");
+    update_post_meta($post_id, 'res_staff', $new_staff);
+    update_post_meta($post_id, '_old_res_staff', $new_staff);
+  }
+}, 20);
+
 
 
 /** 管理画面リストカスタマイズ */
-add_filter('manage_edit-reservation_columns',function($cols){
+add_filter('manage_edit-reservation_columns', function($cols) {
   return [
-    'cb'=>'<input type="checkbox">',
-    'res_datetime'=>'日時',
-    'res_name'=>'お名前',
-    'res_tel'=>'電話',
-    'res_email'=>'メール',
-    'res_menu'=>'メニュー',
-    'res_staff'=>'担当',
-    'date'=>'登録日'
+    'cb'          => '<input type="checkbox">',
+    'res_datetime'=> '日時',
+    'res_name'    => 'お名前',
+    'res_tel'     => '電話',
+    'res_email'   => 'メール',
+    'res_menu'    => 'メニュー',
+    'res_staff'   => '担当',
+    'res_actions' => '操作', // ← 新しく追加（ボタン列）
+    'date'        => '登録日',
   ];
 });
 
-add_action('manage_reservation_posts_custom_column',function($col,$id){
-  $v=get_post_meta($id,$col,true);
-  switch($col){
-    case 'res_tel': echo $v?'<a href="tel:'.esc_attr($v).'">'.esc_html($v).'</a>':'ー'; break;
-    case 'res_email': echo $v?'<a href="mailto:'.esc_attr($v).'">'.esc_html($v).'</a>':'ー'; break;
+add_action('manage_reservation_posts_custom_column', function($col, $id) {
+  $v = get_post_meta($id, $col, true);
+
+  switch ($col) {
+
+    // ▼ 電話番号
+    case 'res_tel':
+      if ($v) {
+        echo '<a href="tel:' . esc_attr($v) . '">' . esc_html($v) . '</a>';
+      } else {
+        echo ''; // ← 全角「ー」削除、空欄に
+      }
+      break;
+
+    // ▼ メールアドレス
+    case 'res_email':
+      if ($v) {
+        echo '<a href="mailto:' . esc_attr($v) . '">' . esc_html($v) . '</a>';
+      } else {
+        echo ''; // ← 全角「ー」削除、空欄に
+      }
+      break;
+
+    // ▼ 担当スタッフ
     case 'res_staff':
-      $v=intval($v);
-      if($v===0){ echo '指名なし'; break; }
-      $u=get_userdata($v); echo $u?esc_html($u->display_name):'ー'; break;
-    default: echo esc_html($v ?: 'ー');
+      $v = intval($v);
+      $u = $v ? get_userdata($v) : null;
+      $auto = intval(get_post_meta($id, 'res_auto_assigned', true));
+      if ($u) {
+        echo esc_html($u->display_name);
+        if ($auto) echo '（指名なし）';
+      } else {
+        echo '指名なし'; // ← 全角「ー」削除済
+      }
+      break;
+
+    // ▼ 操作欄
+    case 'res_actions':
+      $edit_url  = get_edit_post_link($id);
+      $trash_url = get_delete_post_link($id);
+      echo '<div style="display:flex;gap:6px;">';
+      echo '<a href="' . esc_url($edit_url) . '" class="button button-small">編集</a>';
+      echo '<a href="' . esc_url($trash_url) . '" class="button button-small" style="color:#a00;">削除</a>';
+      echo '</div>';
+      break;
+
+    // ▼ その他（メニュー・日時など）
+    default:
+      echo esc_html($v ?: ''); // ← 全角「ー」削除済
   }
-},10,2);
+}, 10, 2);
+
+
+
 /***********************************************************
  * 6️⃣ スタッフ設定（施術メニュー対応可・施術時間）
  ***********************************************************/
@@ -625,92 +746,179 @@ function salon_generate_calendar_html_all_staff($menu_key, $week = 0) {
   ob_start(); ?>
   <div class="salon-calendar">
     <h3 class="cal-title">空き状況（1週間）</h3>
-    <div class="cal-legend"><span>○：予約可</span><span>×：予約済</span><span>—：出勤なし</span></div>
+    <div class="cal-legend">
+      <span>○：予約可</span>
+      <span>×：予約済</span>
+      <span>—：出勤なし</span>
+    </div>
 
     <table class="cal-table">
       <thead>
         <tr>
           <th>時間</th>
           <?php foreach ($week_dates as $d): ?>
-            <th><?php echo date('n/j', strtotime($d)); ?>(<?php echo ['日','月','火','水','木','金','土'][date('w', strtotime($d))]; ?>)</th>
+            <th><?php echo date('n/j', strtotime($d)); ?>
+              (<?php echo ['日','月','火','水','木','金','土'][date('w', strtotime($d))]; ?>)
+            </th>
           <?php endforeach; ?>
         </tr>
       </thead>
+
       <tbody>
       <?php foreach ($times as $time): ?>
-  <tr>
-    <th><?php echo esc_html($time); ?></th>
-    <?php foreach ($week_dates as $d): ?>
-      <?php
-      // ✅ この位置でOK（ここなら$dと$time両方使える）
-      error_log("=== check date/time $d $time ===");
+        <tr>
+          <th><?php echo esc_html($time); ?></th>
 
-      $w = date('w', strtotime($d));
-      $is_holiday = in_array((string)$w, $holidays, true);
-      if ($is_holiday) {
-        echo '<td class="holiday">休</td>';
-        continue;
-      }
-
-      // 出勤しているスタッフを取得
-      $available_staffs = [];
-      foreach ($staffs as $u) {
-        if (salon_is_staff_available($u->ID, $d, $time)) {
-          $available_staffs[] = $u->ID;
-        }
-      }
-
-      if (empty($available_staffs)) {
-        echo '<td class="off">—</td>';
-        continue;
-      }
-
-      // 出勤スタッフの予約状況確認
-      $is_booked = false;
-      foreach ($available_staffs as $sid) {
-        $q = new WP_Query([
-          'post_type'      => 'reservation',
-          'post_status'    => 'any',
-          'posts_per_page' => -1,
-          'meta_query'     => [
-            ['key' => 'res_staff', 'value' => $sid],
-            ['key' => 'res_date',  'value' => $d],
-          ],
-        ]);
-        if ($q->have_posts()) {
-          while ($q->have_posts()) {
-            $q->the_post();
-            $res_time = get_post_meta(get_the_ID(), 'res_time', true);
-            $menu     = get_post_meta(get_the_ID(), 'res_menu', true);
-            $settings = get_user_meta($sid, 'salon_menu_settings', true) ?: [];
-            $dur      = intval($settings[$menu]['duration'] ?? 60);
-            $start_ts = strtotime("$d $res_time");
-            $end_ts   = $start_ts + ($dur * 60);
-            $chk_ts   = strtotime("$d $time");
-            if ($chk_ts >= $start_ts && $chk_ts < $end_ts) {
-              $is_booked = true;
-              break 2;
+          <?php foreach ($week_dates as $d): ?>
+            <?php
+            $w = date('w', strtotime($d));
+            $is_holiday = in_array((string)$w, $holidays, true);
+            if ($is_holiday) {
+              echo '<td class="holiday">休</td>';
+              continue;
             }
-          }
-          wp_reset_postdata();
-        }
-      }
 
-      if ($is_booked) {
-        echo '<td class="booked">×</td>';
-      } else {
-        echo '<td class="available">○</td>';
-      }
-      ?>
-    <?php endforeach; ?>
-  </tr>
-<?php endforeach; ?>
+            // --- 出勤スタッフを取得 ---
+            $available_staffs = [];
+            foreach ($staffs as $u) {
+              if (salon_is_staff_available($u->ID, $d, $time)) {
+                $available_staffs[] = $u->ID;
+              }
+            }
+
+            if (empty($available_staffs)) {
+              echo '<td class="off">—</td>';
+              continue;
+            }
+
+            // --- この日の全予約を一括取得（res_staff=0 も含む） ---
+            $q = new WP_Query([
+              'post_type'      => 'reservation',
+              'post_status'    => 'any',
+              'posts_per_page' => -1,
+              'meta_query'     => [
+                'relation' => 'AND',
+                [
+                  'key'     => 'res_date',
+                  'value'   => $d,
+                  'compare' => '=',
+                ],
+                [
+                  'relation' => 'OR',
+                  // 指名なし（0 または '0'）も含む
+                  [
+                    'key'     => 'res_staff',
+                    'value'   => 0,
+                    'compare' => '=',
+                    'type'    => 'NUMERIC',
+                  ],
+                  [
+                    'key'     => 'res_staff',
+                    'value'   => '0',
+                    'compare' => '=',
+                  ],
+                  [
+                    'key'     => 'res_staff',
+                    'compare' => 'EXISTS',
+                  ],
+                ],
+              ],
+            ]);
+            
+
+
+$reservations = [];
+if ($q->have_posts()) {
+  while ($q->have_posts()) {
+    $q->the_post();
+
+    // res_staffを安全に数値化（空文字や"0"も0として扱う）
+    $rstaff = get_post_meta(get_the_ID(), 'res_staff', true);
+    $rstaff = is_numeric($rstaff) ? intval($rstaff) : 0;
+
+    // res_timeも安全にフォーマット
+    $rtime = get_post_meta(get_the_ID(), 'res_time', true);
+    $rtime = $rtime ? date('H:i', strtotime($rtime)) : '';
+
+    $reservations[] = [
+      'staff' => $rstaff,
+      'time'  => $rtime,
+    ];
+  }
+}
+wp_reset_postdata();
+
+
+            // --- デバッグ付き：この時間に全員埋まっているかチェック（ログ出力版） ---
+$available_count = count($available_staffs);
+$booked_count = 0;
+$current_time = date('H:i', strtotime($time));
+
+// ログ出力開始
+error_log("=== {$d} {$current_time} 判定開始 ===");
+error_log("出勤スタッフ: " . implode(',', $available_staffs));
+
+// 予約リスト出力
+foreach ($reservations as $r) {
+  error_log("予約 -> staff={$r['staff']} time={$r['time']}");
+}
+
+// 各スタッフの埋まり判定
+foreach ($available_staffs as $sid) {
+  $is_booked = false;
+
+  foreach ($reservations as $r) {
+    if ($r['staff'] === $sid && $r['time'] === $current_time) {
+      $is_booked = true;
+      break;
+    }
+  }
+
+  if ($is_booked) {
+    $booked_count++;
+    error_log("スタッフ{$sid} は埋まり");
+  } else {
+    error_log("スタッフ{$sid} は空き");
+  }
+}
+
+// 指名なし予約チェック
+$has_nominationless = false;
+foreach ($reservations as $r) {
+  if ($r['staff'] === 0 && $r['time'] === $current_time) {
+    $has_nominationless = true;
+    error_log("指名なし予約あり");
+    break;
+  }
+}
+
+error_log("出勤={$available_count} / 埋まり={$booked_count} / 指名なし={$has_nominationless}");
+
+// --- 判定出力 ---
+if ($booked_count < $available_count) {
+  echo '<td class="available">○</td>';
+  error_log("→ 判定: ○（まだ空きあり）");
+} else {
+  if ($has_nominationless) {
+    echo '<td class="booked">×</td>';
+    error_log("→ 判定: ×（全員埋まり＋指名なし予約）");
+  } else {
+    echo '<td class="available">○</td>';
+    error_log("→ 判定: ○（全員埋まりだが指名なし無し）");
+  }
+}
+
+            ?>
+          <?php endforeach; ?>
+        </tr>
+      <?php endforeach; ?>
       </tbody>
     </table>
   </div>
   <?php
   return ob_get_clean();
 }
+
 
 // =========================================================
 // カレンダー生成（フロント）
@@ -730,51 +938,87 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
 
   // ===== スタッフ対象 =====
   $staffs = [];
-  if ($staff_id > 0) {
-    $u = get_userdata($staff_id);
-    if ($u) $staffs = [$u];
-  } else {
-    $staffs = salon_get_staff_users();
+if ($staff_id > 0) {
+  // 指名予約：特定スタッフのみ
+  $u = get_userdata($staff_id);
+  if ($u) $staffs = [$u];
+} else {
+  // 指名なし予約：対応可能スタッフのみ
+  $all_staffs = salon_get_staff_users();
+
+  foreach ($all_staffs as $s) {
+    $uid = $s->ID;
+
+    // ✅ 施術メニュー設定を取得
+    $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
+
+    // 有効フラグチェック（enabled=1 のみ許可）
+    if (!empty($menu_settings[$menu_key]['enabled']) && intval($menu_settings[$menu_key]['enabled']) === 1) {
+      $staffs[] = $s;
+    }
   }
+}
 
   // ====== 予約情報の取得 ======
   $booked = [];
-  $posts = get_posts([
-    'post_type' => 'reservation',
-    'post_status' => 'publish',
-    'numberposts' => -1,
-    'meta_query' => [['key' => 'res_date', 'value' => $week_dates, 'compare' => 'IN']]
-  ]);
+$posts = get_posts([
+  'post_type'   => 'reservation',
+  'post_status' => 'publish',
+  'numberposts' => -1,
+  'meta_query'  => [
+    ['key' => 'res_date', 'value' => $week_dates, 'compare' => 'IN']
+  ]
+]);
 
-  foreach ($posts as $p) {
-    $pid  = $p->ID;
-    $date = get_post_meta($pid, 'res_date', true);
-    $time = get_post_meta($pid, 'res_time', true);
-    $sid  = get_post_meta($pid, 'res_staff', true);
-    $menu = get_post_meta($pid, 'res_menu', true);
-  
-    if (!$sid || !$date || !$time) continue;
-  
-    // --- 共通で施術時間を取得 ---
-    $menu_durations = get_user_meta($sid, 'salon_menu_durations', true);
-    $menu_duration  = isset($menu_durations[$menu]) ? intval($menu_durations[$menu]) : 60;
-    $time_step      = intval($store['time_step'] ?? 30);
-  
-    // --- 予約用のみブロック拡張 ---
-    if ($mode === 'front') {
-      $start_ts = strtotime("$date $time");
-      $before_minutes = $menu_duration - $time_step;
-      $block_start_ts = strtotime("-{$before_minutes} minutes", $start_ts);
-      $block_end_ts   = strtotime("+{$menu_duration} minutes", $start_ts);
-      for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
-        $block_time = date('H:i', $t);
-        $booked[$sid][$date][$block_time] = true;
+foreach ($posts as $p) {
+  $pid   = $p->ID;
+  $date  = get_post_meta($pid, 'res_date', true);
+  $time  = get_post_meta($pid, 'res_time', true);
+  $sid   = intval(get_post_meta($pid, 'res_staff', true)); // 指名なしは 0
+  $menu  = get_post_meta($pid, 'res_menu', true);
+
+  if (!$date || !$time) continue;
+
+  // --- 対応時間（duration）取得 ---
+  $menu_duration = 60;
+  if ($sid > 0) {
+    // 指名予約：スタッフ個別設定
+    $menu_settings = get_user_meta($sid, 'salon_menu_settings', true);
+    $menu_duration = intval($menu_settings[$menu]['duration'] ?? 60);
+  } else {
+    // 指名なし：予約されたメニュー名から duration を推定
+    $first_staff = current(salon_get_staff_users());
+    $menu_settings = get_user_meta($first_staff->ID, 'salon_menu_settings', true);
+    $menu_duration = intval($menu_settings[$menu]['duration'] ?? 60);
+  }
+
+  $time_step = intval($store['time_step'] ?? 30);
+  $start_ts = strtotime("$date $time");
+  $before_minutes = $menu_duration - $time_step;
+  $block_start_ts = strtotime("-{$before_minutes} minutes", $start_ts);
+  $block_end_ts   = strtotime("+{$menu_duration} minutes", $start_ts);
+
+  // --- ここからブロック登録 ---
+  if ($sid === 0) {
+    // 🔸 指名なし予約：対応可スタッフ全員をブロック
+    foreach (salon_get_staff_users() as $staff) {
+      $menu_settings = get_user_meta($staff->ID, 'salon_menu_settings', true);
+      if (!empty($menu_settings[$menu]['enabled']) && intval($menu_settings[$menu]['enabled']) === 1) {
+        for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
+          $block_time = date('H:i', $t);
+          $booked[$staff->ID][$date][$block_time] = true;
+        }
       }
-    } else {
-      // 確認用は開始時間のみブロック
-      $booked[$sid][$date][$time] = true;
+    }
+  } else {
+    // 🔹 指名予約：そのスタッフのみブロック
+    for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
+      $block_time = date('H:i', $t);
+      $booked[$sid][$date][$block_time] = true;
     }
   }
+}
+
   
 
   // ===== 出勤データの取得 =====
@@ -899,27 +1143,21 @@ function salon_is_staff_available($staff_id, $date, $time) {
     }
   }
 
-  // 🔍 ログ出力（デバッグ）
-  error_log("👀 check staff $staff_id / date=$date time=$time key=$shift_key");
-  error_log("shift_meta (merged): " . print_r($shift_meta, true));
 
   // 正常化処理
   $shift_norm = salon_normalize_shift_meta((array)$shift_meta, $ym);
-  error_log("shift_norm: " . print_r($shift_norm, true));
 
   // 該当日を取得
   $day_key = date('j', strtotime($date));
   $shift = $shift_norm[$day_key] ?? null;
 
   if (!$shift || empty($shift['s']) || empty($shift['e'])) {
-    error_log("❌ no valid shift for staff $staff_id on $date");
     return false;
   }
 
   $t = salon_time_to_min($time);
   $s = salon_time_to_min($shift['s']);
   $e = salon_time_to_min($shift['e']);
-  error_log("🕓 compare $time ($t) between {$shift['s']}~{$shift['e']} ($s~$e)");
 
   if ($t < $s || $t >= $e) {
     error_log("⛔ out of range for $staff_id on $date ($time)");
@@ -934,20 +1172,26 @@ function salon_is_staff_available($staff_id, $date, $time) {
 
 
 /** Ajax：カレンダー切替 */
+/** Ajax：カレンダー切替 */
 add_action('wp_ajax_salon_load_calendar','salon_ajax_load_calendar');
 add_action('wp_ajax_nopriv_salon_load_calendar','salon_ajax_load_calendar');
 function salon_ajax_load_calendar(){
-  $menu_key=sanitize_text_field($_POST['menu_key']??'');
-  $staff_id=intval($_POST['staff_id']??0);
-  $week=intval($_POST['week']??0);
+  $menu_key = sanitize_text_field($_POST['menu_key'] ?? '');
+  $staff_id = intval($_POST['staff_id'] ?? 0);
+  $week     = intval($_POST['week'] ?? 0);
 
-  if($staff_id===0){
-    echo salon_generate_calendar_html_all_staff($menu_key,$week);
-  }else{
-    echo salon_generate_calendar_html($menu_key,$staff_id,$week);
+  if ($staff_id === 0) {
+    // 指名なし → 全スタッフ分まとめて生成
+    echo salon_generate_calendar_html_all_staff($menu_key, $week);
+  } else {
+    // 指名あり → 共有ブロックも反映
+    echo salon_generate_calendar_html_with_shared_blocks($menu_key, $staff_id, $week);
   }
+
   wp_die();
 }
+
+
 
 /** ショートコード */
 add_shortcode('salon_calendar',function($atts){
@@ -991,9 +1235,6 @@ add_action('wp_ajax_nopriv_salon_submit_reservation', 'salon_submit_reservation'
 
 function salon_submit_reservation(){
 
-  // 🔍 まず最初に「この関数が実行されたか」を記録
-  error_log('=== salon_submit_reservation 実行 ===');
-  error_log(print_r($_POST, true));
 
   // ✅ nonce検証（完全一致すること）
   check_ajax_referer('salon_reservation_nonce', 'nonce');
@@ -1024,38 +1265,80 @@ function salon_submit_reservation(){
     wp_send_json_error(['msg'=>'申し訳ありません。この時間はすでに予約が埋まっています。']);
   }
 
+  // ✅ STEP2：指名なし → 自動担当割当
+  if ($staff === 0) {
+    $staffs = salon_get_staff_users();
+    $assigned = 0;
+
+    foreach ($staffs as $s) {
+      $uid = $s->ID;
+      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
+
+      // メニュー対応可 && 出勤中 && 空き時間なら採用
+      if (!empty($menu_settings[$menu]['enabled']) && salon_is_staff_available($uid, $date, $time)) {
+        $staff = $uid;
+        $assigned = 1;
+        break;
+      }
+    }
+
+    update_post_meta($post_id, 'res_auto_assigned', $assigned ? 1 : 0); // 自動割当フラグ
+  }
+
+  // ✅ 指名料処理
+  $store = salon_get_store_settings();
+  $nomination_fee = intval($store['nomination_fee'] ?? 0);
+  $total_price = 0;
+
+  $menus = $store['menus'] ?? [];
+  foreach ($menus as $m) {
+    if ($m['name'] === $menu) {
+      $total_price = intval($m['price']);
+      break;
+    }
+  }
+
+  // 指名予約で指名料ありなら加算
+  if ($staff > 0 && intval($_POST['staff'] ?? 0) > 0 && $nomination_fee > 0) {
+    $total_price += $nomination_fee;
+  }
+
+  update_post_meta($post_id, 'res_nomination_fee', ($staff > 0 && intval($_POST['staff'] ?? 0) > 0) ? $nomination_fee : 0);
+  update_post_meta($post_id, 'res_total', $total_price);
+
   // 予約登録
-  $post_id = wp_insert_post([
-    'post_type'   => 'reservation',
-    'post_status' => 'publish',
-    'post_title'  => sprintf('%s %s %s（%s）',$date,$time,$name,$menu),
-  ]);
-  if (is_wp_error($post_id)) {
-    error_log('❌ wp_insert_post失敗: ' . $post_id->get_error_message());
-    wp_send_json_error(['msg'=>'予約の登録に失敗しました。']);
-  }
-  if(!$post_id){
-    error_log('❌ wp_insert_post から false が返却されました');
-    wp_send_json_error(['msg'=>'予約の登録に失敗しました。']);
-  }
+$post_id = wp_insert_post([
+  'post_type'   => 'reservation',
+  'post_status' => 'publish',
+  'post_title'  => sprintf('%s %s %s（%s）', $date, $time, $name, $menu),
+]);
 
-  error_log('✅ 投稿作成成功: post_id=' . $post_id);
+if (is_wp_error($post_id)) {
+  error_log('❌ wp_insert_post失敗: ' . $post_id->get_error_message());
+  wp_send_json_error(['msg' => '予約の登録に失敗しました。']);
+}
 
-  update_post_meta($post_id,'res_name',$name);
-  update_post_meta($post_id,'res_tel',$tel);
-  update_post_meta($post_id,'res_email',$email);
-  update_post_meta($post_id,'res_date',$date);
-  update_post_meta($post_id,'res_time',$time);
-  update_post_meta($post_id,'res_menu',$menu);
-  update_post_meta($post_id,'res_staff',$staff);
-  update_post_meta($post_id,'res_datetime',"$date $time:00");
+if (!$post_id) {
+  error_log('❌ wp_insert_post から false が返却されました');
+  wp_send_json_error(['msg' => '予約の登録に失敗しました。']);
+}
 
-  error_log('✅ メタデータ登録完了');
+// === ここでメタ保存 ===
+update_post_meta($post_id, 'res_name', $name);
+update_post_meta($post_id, 'res_tel', $tel);
+update_post_meta($post_id, 'res_email', $email);
+update_post_meta($post_id, 'res_date', $date);
+update_post_meta($post_id, 'res_time', $time);
+update_post_meta($post_id, 'res_menu', $menu);
+update_post_meta($post_id, 'res_staff', $staff);
+update_post_meta($post_id, 'res_datetime', "$date $time:00");
 
-  salon_send_reservation_mail($post_id);
-  error_log('📧 メール送信処理呼び出し完了');
+// ✅ 自動割当フラグをここで確実に保存
+update_post_meta($post_id, 'res_auto_assigned', ($staff > 0 && intval($_POST['staff'] ?? 0) === 0) ? 1 : 0);
 
-  wp_send_json_success(['msg'=>'ご予約を受け付けました。']);
+salon_send_reservation_mail($post_id);
+wp_send_json_success(['msg' => 'ご予約を受け付けました。']);
+
 }
 
 
@@ -1168,34 +1451,42 @@ function salon_generate_readonly_calendar($menu_key, $staff_id = 0, $week = 0) {
               } else {
                 // 出勤中 → 予約状況を確認
                 $is_booked = false;
-                foreach ($available_staffs as $sid) {
-                  $q = new WP_Query([
-                    'post_type'      => 'reservation',
-                    'post_status'    => 'any',
-                    'posts_per_page' => -1,
-                    'meta_query'     => [
-                      ['key' => 'res_staff', 'value' => $sid],
-                      ['key' => 'res_date', 'value' => $d],
-                    ],
-                  ]);
-                  if ($q->have_posts()) {
-                    while ($q->have_posts()) {
-                      $q->the_post();
-                      $res_time = get_post_meta(get_the_ID(), 'res_time', true);
-                      $menu     = get_post_meta(get_the_ID(), 'res_menu', true);
-                      $settings = get_user_meta($sid, 'salon_menu_settings', true) ?: [];
-                      $dur      = intval($settings[$menu]['duration'] ?? 60);
-                      $start_ts = strtotime("$d $res_time");
-                      $end_ts   = $start_ts + ($dur * 60);
-                      $chk_ts   = strtotime("$d $time");
-                      if ($chk_ts >= $start_ts && $chk_ts < $end_ts) {
-                        $is_booked = true;
-                        break 2; // 予約あり → ループ終了
-                      }
-                    }
-                    wp_reset_postdata();
-                  }
-                }
+foreach ($available_staffs as $sid) {
+  $q = new WP_Query([
+    'post_type'      => 'reservation',
+    'post_status'    => 'any',
+    'posts_per_page' => -1,
+    'meta_query'     => [
+      'relation' => 'AND',
+      [
+        'key'   => 'res_date',
+        'value' => $d,
+      ],
+      [
+        'relation' => 'OR',
+        ['key' => 'res_staff', 'value' => (string)$sid, 'compare' => '='],
+        ['key' => 'res_staff', 'value' => '0', 'compare' => '='], // ← 指名なしも含める！
+      ],
+    ],
+  ]);
+  if ($q->have_posts()) {
+    while ($q->have_posts()) {
+      $q->the_post();
+      $res_time = get_post_meta(get_the_ID(), 'res_time', true);
+      $menu     = get_post_meta(get_the_ID(), 'res_menu', true);
+      $settings = get_user_meta($sid, 'salon_menu_settings', true) ?: [];
+      $dur      = intval($settings[$menu]['duration'] ?? 60);
+      $start_ts = strtotime("$d $res_time");
+      $end_ts   = $start_ts + ($dur * 60);
+      $chk_ts   = strtotime("$d $time");
+      if ($chk_ts >= $start_ts && $chk_ts < $end_ts) {
+        $is_booked = true;
+        break 2; // 予約あり → ループ終了
+      }
+    }
+    wp_reset_postdata();
+  }
+}
 
                 if ($is_booked) {
                   echo '<td class="booked">×</td>';
@@ -1323,9 +1614,6 @@ function salon_get_staff_shifts($user_id, $ym = '') {
     }
   }
 
-  // 🪶 デバッグログ（確認用）
-  error_log("🧭 salon_get_staff_shifts(user_id={$user_id}, ym={$ym})");
-  error_log(print_r($shift_meta, true));
 
   return $shift_meta;
 }
@@ -1340,7 +1628,6 @@ add_action('wp_ajax_salon_render_calendar_public_readonly', 'salon_render_calend
 add_action('wp_ajax_nopriv_salon_render_calendar_public_readonly', 'salon_render_calendar_public_readonly');
 
 function salon_render_calendar_public_readonly() {
-    error_log('=== salon_render_calendar_public_readonly 実行 ===');
 
     $menu_key = sanitize_text_field($_POST['menu_key'] ?? '');
     $staff_id = intval($_POST['staff_id'] ?? 0);
@@ -1368,3 +1655,493 @@ function salon_get_calendar_html() {
   echo salon_generate_calendar_html($menu_key, $staff_id);
   wp_die();
 }
+
+/**
+ * 指名スタッフ専用カレンダー（指名なし予約も考慮）
+ */
+function salon_generate_calendar_html_with_shared_blocks($menu_key, $staff_id, $week = 0) {
+  date_default_timezone_set('Asia/Tokyo');
+
+  $store     = salon_get_store_settings();
+  $holidays  = $store['holidays'] ?? [];
+  $time_step = intval($store['time_step'] ?? 30);
+
+  $today = strtotime('today');
+  $start = strtotime("+".(7 * intval($week))." days", $today);
+  $week_dates = [];
+  for ($i = 0; $i < 7; $i++) $week_dates[] = date('Y-m-d', strtotime("+$i day", $start));
+
+  $times = salon_time_slots();
+
+  ob_start(); ?>
+  <div class="salon-calendar">
+    <h3 class="cal-title">空き状況（1週間）</h3>
+    <div class="cal-legend"><span>○：予約可</span><span>×：予約済</span><span>—：出勤なし</span></div>
+
+    <table class="cal-table">
+      <thead>
+        <tr>
+          <th>時間</th>
+          <?php foreach ($week_dates as $d): ?>
+            <th><?php echo date('n/j', strtotime($d)); ?>(<?php echo ['日','月','火','水','木','金','土'][date('w', strtotime($d))]; ?>)</th>
+          <?php endforeach; ?>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($times as $time): ?>
+          <tr>
+            <th><?php echo esc_html($time); ?></th>
+            <?php foreach ($week_dates as $d): ?>
+              <?php
+              $w = date('w', strtotime($d));
+              $is_holiday = in_array((string)$w, $holidays, true);
+              if ($is_holiday) {
+                echo '<td class="holiday">休</td>';
+                continue;
+              }
+
+              // --- 出勤確認 ---
+              if (!salon_is_staff_available($staff_id, $d, $time)) {
+                echo '<td class="off">—</td>';
+                continue;
+              }
+
+              // --- 予約状況を確認 ---
+              $q = new WP_Query([
+                'post_type'      => 'reservation',
+                'post_status'    => 'any',
+                'posts_per_page' => -1,
+                'meta_query'     => [
+                  'relation' => 'AND',
+                  [
+                    'key'   => 'res_date',
+                    'value' => $d,
+                  ],
+                  [
+                    'relation' => 'OR',
+                    ['key' => 'res_staff', 'value' => (string)$staff_id, 'compare' => '='],
+                    ['key' => 'res_staff', 'value' => '0', 'compare' => '='], // ← 指名なしを含める
+                  ],
+                ],
+              ]);
+
+              $is_booked = false;
+              if ($q->have_posts()) {
+                while ($q->have_posts()) {
+                  $q->the_post();
+                  $res_time = get_post_meta(get_the_ID(), 'res_time', true);
+                  if ($res_time === $time) {
+                    $is_booked = true;
+                    break;
+                  }
+                }
+              }
+              wp_reset_postdata();
+
+              echo $is_booked
+                ? '<td class="booked">×</td>'
+                : '<td class="available">○</td>';
+              ?>
+            <?php endforeach; ?>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php
+  return ob_get_clean();
+}
+
+
+/**
+ * ▼ 予約編集画面：担当スタッフ（完全固定・指名なし除外版）
+ */
+/**
+ * =========================================================
+ * 予約保存時：「_old_res_staff」を正しく保持（初回から保存）
+ * =========================================================
+ */
+add_action('save_post_reservation', function($post_id, $post, $update) {
+
+  // ✅ 無限ループ防止
+  if (defined('SALON_SAVE_RUNNING')) return;
+  define('SALON_SAVE_RUNNING', true);
+
+  // ✅ 自動保存をスキップ
+  if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+  if (!current_user_can('edit_post', $post_id)) return;
+
+  // ✅ POSTまたはメタから担当スタッフを取得
+  $new_staff = isset($_POST['res_staff'])
+    ? intval($_POST['res_staff'])
+    : intval(get_post_meta($post_id, 'res_staff', true));
+
+  // 旧データ取得
+  $old_staff = get_post_meta($post_id, '_old_res_staff', true);
+
+  // ✅ 初回登録時または旧データが空のときだけ処理
+  if ($old_staff === '' || $old_staff === null) {
+
+    // スタッフ名を取得
+    $staff_label = '';
+    if (isset($_POST['res_staff_name']) && $_POST['res_staff_name'] !== '') {
+      $staff_label = sanitize_text_field($_POST['res_staff_name']);
+    } else {
+      $user = get_userdata($new_staff);
+      $staff_label = $user ? $user->display_name : '';
+    }
+
+    // 指名なし判定
+    $is_no_nomination = (
+      stripos($staff_label, '指名なし') !== false ||
+      $new_staff === 0
+    );
+
+    if ($is_no_nomination) {
+      update_post_meta($post_id, '_old_res_staff', 0);
+      error_log("=== 初回保存: 指名なし post_id=$post_id ===");
+    } else {
+      update_post_meta($post_id, '_old_res_staff', $new_staff);
+      error_log("=== 初回保存: 指名あり post_id=$post_id staff_id=$new_staff ===");
+    }
+
+  } else {
+    // すでに記録済みならスキップ
+    error_log("=== 更新維持: _old_res_staff=$old_staff post_id=$post_id ===");
+  }
+
+}, 20, 3);
+
+
+
+
+/**
+ * ▼ 予約投稿タイプの編集画面：タイトルとエディタを非表示
+ */
+add_action('admin_head', function() {
+  global $post_type;
+  if ($post_type === 'reservation') {
+    echo '<style>
+      #titlediv, #postdivrich { display: none !important; }
+    </style>';
+  }
+});
+
+/**
+ * ▼ 予約投稿タイプ：右側の「担当スタッフ」メタボックスを確実に削除
+ */
+add_action('add_meta_boxes', function() {
+  remove_meta_box('reservation_staff_box', 'reservation', 'side');
+}, 9999); // ← 後から実行するための優先度
+
+/**
+ * =========================================================
+ * 予約保存時：「_old_res_staff」を正しく保持（指名あり／なしを記録）
+ * =========================================================
+ */
+add_action('save_post_reservation', function($post_id, $post, $update) {
+
+  // ✅ 無限ループ防止
+  if (defined('SALON_SAVE_RUNNING')) return;
+  define('SALON_SAVE_RUNNING', true);
+
+  // ✅ 自動保存や権限チェックをスキップ
+  if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+  if (!current_user_can('edit_post', $post_id)) return;
+  if (!isset($_POST['res_staff'])) return;
+
+  $new_staff = intval($_POST['res_staff']); // 現在担当スタッフ
+  $old_staff = get_post_meta($post_id, '_old_res_staff', true);
+
+  // ✅ まだ旧スタッフが保存されていない（初回保存時）
+  if ($old_staff === '' || $old_staff === null) {
+
+    // ▼ スタッフ名をPOSTまたはDBから取得
+    $staff_label = '';
+    if (isset($_POST['res_staff_name']) && $_POST['res_staff_name'] !== '') {
+      $staff_label = sanitize_text_field($_POST['res_staff_name']);
+    } else {
+      $user = get_userdata($new_staff);
+      $staff_label = $user ? $user->display_name : '';
+    }
+
+    // ▼ 「指名なし」判定
+    $is_no_nomination = (
+      stripos($staff_label, '指名なし') !== false ||
+      stripos($staff_label, 'no staff') !== false ||
+      $new_staff === 0
+    );
+
+    // ▼ 保存
+    if ($is_no_nomination) {
+      update_post_meta($post_id, '_old_res_staff', 0); // 指名なし
+      error_log("=== 初回保存: 指名なし post_id=$post_id ===");
+    } else {
+      update_post_meta($post_id, '_old_res_staff', $new_staff); // 指名あり
+      error_log("=== 初回保存: 指名あり post_id=$post_id staff_id=$new_staff ===");
+    }
+
+  } else {
+    // 2回目以降の更新時は上書きしない
+    error_log("=== 更新維持: _old_res_staff=$old_staff post_id=$post_id ===");
+  }
+
+}, 20, 3);
+
+
+
+/**
+ * =========================================================
+ * Ajax：担当変更後にカレンダー更新をトリガー
+ * =========================================================
+ */
+add_action('save_post_reservation', function($post_id) {
+  if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+  if (!current_user_can('edit_post', $post_id)) return;
+
+  // 予約情報取得
+  $date  = get_post_meta($post_id, 'res_date', true);
+  $time  = get_post_meta($post_id, 'res_time', true);
+  $staff = intval(get_post_meta($post_id, 'res_staff', true));
+
+  // JavaScriptに送るイベント情報
+  $data = [
+    'date'  => $date,
+    'time'  => $time,
+    'staff' => $staff,
+  ];
+
+  // Ajax経由で通知
+  update_option('salon_last_update', $data); // 最新変更を一時保存
+}, 30);
+
+
+/**
+ * =========================================================
+ * Ajax：カレンダー更新情報を取得（JSから呼び出し）
+ * =========================================================
+ */
+add_action('wp_ajax_salon_get_last_update', function() {
+  $data = get_option('salon_last_update', []);
+  wp_send_json_success($data);
+});
+add_action('wp_ajax_nopriv_salon_get_last_update', function() {
+  $data = get_option('salon_last_update', []);
+  wp_send_json_success($data);
+});
+
+
+/**
+ * ▼ 予約一覧に「指名料」「合計金額」カラムを追加
+ */
+add_filter('manage_edit-reservation_columns', function($columns) {
+  $new = [];
+  foreach ($columns as $key => $label) {
+    $new[$key] = $label;
+    if ($key === 'res_staff') {
+      $new['nomination_fee'] = '指名料';
+      $new['total_price']    = '合計金額';
+    }
+  }
+  return $new;
+});
+
+
+/**
+ * ▼ 「指名料」「合計金額」カラムの出力
+ */
+add_action('manage_reservation_posts_custom_column', function($column, $post_id) {
+
+  if (!in_array($column, ['nomination_fee', 'total_price'], true)) {
+    return;
+  }
+
+  // 店舗設定の取得
+  $store        = salon_get_store_settings();
+  $menus        = $store['menus'] ?? [];
+  $default_fee  = intval($store['nomination_fee'] ?? 0);
+
+  // 予約データ取得
+  $menu_name    = get_post_meta($post_id, 'res_menu', true);
+  $staff_id     = intval(get_post_meta($post_id, 'res_staff', true));
+  $auto_assign  = intval(get_post_meta($post_id, 'res_auto_assigned', true)); // 1 = 指名なし
+
+  // メニュー料金取得（存在しない場合は0）
+  $menu_price = 0;
+  foreach ($menus as $m) {
+    if (!empty($m['name']) && $m['name'] === $menu_name) {
+      $menu_price = intval($m['price']);
+      break;
+    }
+  }
+
+  // 指名料（指名ありの場合のみ加算）
+  $nomination_fee = ($staff_id > 0 && $auto_assign === 0) ? $default_fee : 0;
+
+  // 合計金額
+  $total = $menu_price + $nomination_fee;
+
+  // 出力処理
+  switch ($column) {
+
+    case 'nomination_fee':
+      if ($auto_assign === 1) {
+        echo '-'; // 指名なしのみハイフン表示
+      } elseif ($nomination_fee > 0) {
+        echo esc_html(number_format($nomination_fee)) . '円';
+      } else {
+        echo ''; // それ以外は空欄
+      }
+      break;
+
+    case 'total_price':
+      if ($total > 0) {
+        echo esc_html(number_format($total)) . '円';
+      }
+      break;
+  }
+
+}, 10, 2);
+
+
+
+
+
+/**
+ * ▼ 予約メタデータのデバッグログ出力
+ *   wp-content/debug.log に記録されます
+ */
+add_action('current_screen', function($screen) {
+  if ($screen->post_type === 'reservation' && $screen->base === 'edit') {
+    $posts = get_posts([
+      'post_type' => 'reservation',
+      'numberposts' => 10,
+    ]);
+    foreach ($posts as $p) {
+      $meta = [
+        'post_id'        => $p->ID,
+        'res_menu'       => get_post_meta($p->ID, 'res_menu', true),
+        'res_staff'      => get_post_meta($p->ID, 'res_staff', true),
+        '_old_res_staff' => get_post_meta($p->ID, '_old_res_staff', true),
+      ];
+      error_log(print_r($meta, true));
+    }
+  }
+});
+
+
+/**
+ * =========================================================
+ * 【確定版】担当スタッフ（res_staff）保存後に _old_res_staff を自動同期
+ * =========================================================
+ */
+
+// 🔹 既存メタ更新時
+add_action('updated_post_meta', function($meta_id, $post_id, $meta_key, $meta_value) {
+  if (get_post_type($post_id) !== 'reservation') return;
+  if ($meta_key !== 'res_staff') return;
+
+  $staff_id = intval($meta_value);
+  $user = get_userdata($staff_id);
+  $staff_label = $user ? $user->display_name : '';
+
+  $is_no_nomination = (
+    $staff_id === 0 ||
+    stripos($staff_label, '指名なし') !== false
+  );
+
+  if ($is_no_nomination) {
+    update_post_meta($post_id, '_old_res_staff', 0);
+    error_log("=== updated_post_meta: 指名なし post_id=$post_id ===");
+  } else {
+    update_post_meta($post_id, '_old_res_staff', $staff_id);
+    error_log("=== updated_post_meta: 指名あり post_id=$post_id staff_id=$staff_id ===");
+  }
+
+}, 10, 4);
+
+
+// 🔹 初回メタ追加時
+add_action('added_post_meta', function($meta_id, $post_id, $meta_key, $meta_value) {
+  if (get_post_type($post_id) !== 'reservation') return;
+  if ($meta_key !== 'res_staff') return;
+
+  $staff_id = intval($meta_value);
+  $user = get_userdata($staff_id);
+  $staff_label = $user ? $user->display_name : '';
+
+  $is_no_nomination = (
+    $staff_id === 0 ||
+    stripos($staff_label, '指名なし') !== false
+  );
+
+  if ($is_no_nomination) {
+    update_post_meta($post_id, '_old_res_staff', 0);
+    error_log("=== added_post_meta: 指名なし post_id=$post_id ===");
+  } else {
+    update_post_meta($post_id, '_old_res_staff', $staff_id);
+    error_log("=== added_post_meta: 指名あり post_id=$post_id staff_id=$staff_id ===");
+  }
+
+}, 10, 4);
+
+
+/**
+ * =========================================================
+ * 【最終確定版】投稿全体が保存完了した後に _old_res_staff を確実に登録
+ * =========================================================
+ */
+add_action('wp_after_insert_post', function($post_id, $post, $update) {
+
+  // 対象：予約投稿タイプのみ
+  if ($post->post_type !== 'reservation') return;
+
+  // スタッフID取得（POST優先 → メタ補完）
+  $staff_id = isset($_POST['res_staff'])
+    ? intval($_POST['res_staff'])
+    : intval(get_post_meta($post_id, 'res_staff', true));
+
+  if ($staff_id === 0) {
+    update_post_meta($post_id, '_old_res_staff', 0);
+    error_log("=== wp_after_insert_post: 指名なし post_id=$post_id ===");
+    return;
+  }
+
+  // スタッフ情報取得
+  $user = get_userdata($staff_id);
+  $staff_label = $user ? $user->display_name : '';
+
+  // 指名なし判定
+  $is_no_nomination = (
+    $staff_id === 0 ||
+    stripos($staff_label, '指名なし') !== false
+  );
+
+  // 保存
+  if ($is_no_nomination) {
+    update_post_meta($post_id, '_old_res_staff', 0);
+    error_log("=== wp_after_insert_post: 指名なし post_id=$post_id ===");
+  } else {
+    update_post_meta($post_id, '_old_res_staff', $staff_id);
+    error_log("=== wp_after_insert_post: 指名あり post_id=$post_id staff_id=$staff_id ===");
+  }
+
+}, 10, 3);
+
+
+/**
+ * 指名なし予約の補正処理
+ */
+add_action('save_post_reservation', function($post_id, $post, $update) {
+  if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+  if ($post->post_status === 'auto-draft') return;
+
+  $staff = get_post_meta($post_id, 'res_staff', true);
+
+  // 未設定 or 空 or 0未満の場合にのみ補完
+  if ($staff === '' || $staff === null || intval($staff) < 1) {
+    update_post_meta($post_id, 'res_staff', 0);
+    error_log("✅ 指名なしを維持しました（post_id={$post_id}）");
+  }
+}, 20, 3);
+

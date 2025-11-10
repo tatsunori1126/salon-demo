@@ -3,49 +3,6 @@
  * Template Name: Reservation
  */
 get_header(); ?>
-<style>
-/* ====== レイアウト ====== */
-.resv-wrap{max-width:1080px;margin:40px auto;padding:0 16px;}
-.resv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.btn{display:inline-block;border:1px solid #222;background:#111;color:#fff;padding:10px 16px;border-radius:10px;cursor:pointer;text-decoration:none}
-.btn.sub{background:#fff;color:#111}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.readonly-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.04);padding:18px;margin-bottom:18px;}
-.readonly-title{font-size:1.1rem;font-weight:600;margin:0 0 10px;}
-.week-nav{display:flex;gap:8px;margin-bottom:10px}
-.week-nav .btn-week{border:1px solid #ddd;background:#fafafa;color:#333;padding:6px 10px;border-radius:8px;text-decoration:none}
-.week-nav .btn-week.is-today{background:#eaf4ff;border-color:#c8dfff}
-.cal-legend{display:flex;gap:16px;margin-bottom:8px;font-size:.9rem;opacity:.85}
-.calendar-table{width:100%;border-collapse:collapse;table-layout:fixed}
-.calendar-table th,.calendar-table td{border:1px solid #eee;text-align:center;padding:8px;font-size:13px}
-.calendar-table .time-col{background:#fafafa;width:86px}
-.calendar-table .day-group{background:#f8fbff;font-weight:700}
-.calendar-table .staff-col{background:#fbfbfb;font-weight:600}
-.calendar-table .cell.off{color:#bbb;background:#fcfcfc}
-.calendar-table .cell.available{background:#f7fff6}
-.calendar-table .cell.booked{background:#fff5f5;color:#d33}
-.calendar-table .sep {border-right:2px solid #e5ecff}
-.calendar-table .cell .slot-btn,
-.calendar-table .cell a{pointer-events:none}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:9999}
-.modal-inner{background:#fff;border-radius:14px;padding:18px;min-width:340px;max-width:720px;width:92%}
-.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.modal-head h3{margin:0;font-size:1.1rem}
-.step-title{font-weight:700;margin:10px 0 6px}
-.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-.form-row label{min-width:110px;font-weight:600}
-.input, .select{min-width:220px;padding:10px;border:1px solid #ddd;border-radius:10px}
-.hint{font-size:.88rem;opacity:.75}
-.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
-.status{margin-top:6px;font-size:.95rem}
-#modal-calendar .calendar-table .cell .slot-btn{pointer-events:auto}
-#modal-calendar .calendar-table .cell .slot-btn{padding:4px 10px;border:1px solid #0a7;border-radius:8px;background:#fff;cursor:pointer}
-#modal-calendar .calendar-table .cell .slot-btn.selected{outline:2px solid #07a;}
-.confirm-box{background:#fafafa;border:1px solid #eee;border-radius:12px;padding:14px;margin:8px 0}
-.confirm-row{display:flex;gap:8px;margin:6px 0}
-.confirm-row dt{min-width:110px;font-weight:600}
-.confirm-row dd{margin:0}
-</style>
 
 <div class="resv-wrap">
   <div class="resv-head">
