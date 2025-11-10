@@ -33,7 +33,7 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
     }
   }
 
-  // ====== 予約情報の取得 ======
+  // ====== 予約情報の取得（ブロック考慮＋全スタッフ対応） ======
   $booked = [];
   $posts = get_posts([
     'post_type'   => 'reservation',
@@ -52,14 +52,14 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
     $menu  = get_post_meta($pid, 'res_menu', true);
     if (!$date || !$time) continue;
 
+    // メニュー時間（duration）取得
     $menu_duration = 60;
-    if ($sid > 0) {
-      $menu_settings = get_user_meta($sid, 'salon_menu_settings', true);
-      $menu_duration = intval($menu_settings[$menu]['duration'] ?? 60);
-    } else {
-      $first_staff = current(salon_get_staff_users());
-      $menu_settings = get_user_meta($first_staff->ID, 'salon_menu_settings', true);
-      $menu_duration = intval($menu_settings[$menu]['duration'] ?? 60);
+    $base_staff = ($sid > 0)
+      ? get_userdata($sid)
+      : current(salon_get_staff_users());
+    if ($base_staff) {
+      $settings = get_user_meta($base_staff->ID, 'salon_menu_settings', true);
+      $menu_duration = intval($settings[$menu]['duration'] ?? 60);
     }
 
     $start_ts = strtotime("$date $time");
@@ -67,20 +67,20 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
     $block_start_ts = strtotime("-{$before_minutes} minutes", $start_ts);
     $block_end_ts   = strtotime("+{$menu_duration} minutes", $start_ts);
 
-    if ($sid === 0) {
-      foreach (salon_get_staff_users() as $staff) {
-        $menu_settings = get_user_meta($staff->ID, 'salon_menu_settings', true);
-        if (!empty($menu_settings[$menu]['enabled']) && intval($menu_settings[$menu]['enabled']) === 1) {
-          for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
-            $block_time = date('H:i', $t);
-            $booked[$staff->ID][$date][$block_time] = true;
-          }
+    // ✅ 指名なし（0）なら全スタッフ分ブロック
+    $target_staffs = ($sid === 0)
+      ? salon_get_staff_users()
+      : [get_userdata($sid)];
+
+    foreach ($target_staffs as $stf) {
+      if (!$stf) continue;
+      $uid = $stf->ID;
+      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
+      if (!empty($menu_settings[$menu]['enabled']) && intval($menu_settings[$menu]['enabled']) === 1) {
+        for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
+          $block_time = date('H:i', $t);
+          $booked[$uid][$date][$block_time] = true;
         }
-      }
-    } else {
-      for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
-        $block_time = date('H:i', $t);
-        $booked[$sid][$date][$block_time] = true;
       }
     }
   }
@@ -125,24 +125,25 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
               continue;
             }
 
-            $is_booked = false;
             $is_available = false;
+            $is_booked    = false;
             $available_staff_id = 0;
 
+            // ✅ 全スタッフ確認（continueで正しいループ継続）
             foreach ($staffs as $s) {
               $uid = $s->ID;
               $ym  = date('Ym', strtotime($d));
               $day = (int)date('j', strtotime($d));
               $shift = $shifts[$uid][$day] ?? null;
 
-              if (!$shift || empty($shift['start']) || empty($shift['end'])) {
-                break;
-              }
+              if (!$shift || empty($shift['start']) || empty($shift['end'])) continue;
 
               if (salon_between($time, $shift['start'], $shift['end'])) {
                 $is_available = true;
                 $available_staff_id = $uid;
-                if (!empty($booked[$uid][$d][$time])) {
+
+                // ✅ 指名予約 or 指名なし予約 両方チェック
+                if (!empty($booked[$uid][$d][$time]) || !empty($booked[0][$d][$time])) {
                   $is_booked = true;
                   break;
                 }
@@ -169,6 +170,8 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
   <?php
   return ob_get_clean();
 }
+
+
 
 
 /***********************************************************
