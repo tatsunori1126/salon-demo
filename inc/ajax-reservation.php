@@ -56,8 +56,6 @@ function salon_get_staffs_by_menu_front() {
 add_action('wp_ajax_salon_submit_reservation', 'salon_submit_reservation');
 add_action('wp_ajax_nopriv_salon_submit_reservation', 'salon_submit_reservation');
 function salon_submit_reservation() {
-
-  // ✅ nonce検証
   check_ajax_referer('salon_reservation_nonce', 'nonce');
 
   $name   = sanitize_text_field($_POST['name']   ?? '');
@@ -66,28 +64,58 @@ function salon_submit_reservation() {
   $date   = sanitize_text_field($_POST['date']   ?? '');
   $time   = sanitize_text_field($_POST['time']   ?? '');
   $menu   = sanitize_text_field($_POST['menu']   ?? '');
-  $staff  = intval($_POST['staff'] ?? 0);
+  $staff  = intval($_POST['staff'] ?? 0); // ← 初期値は0（指名なし）
 
-  // ▼ バリデーション
+  // バリデーション
   $errors = [];
   if(!$name)  $errors[]='お名前を入力してください。';
   if(!$tel)   $errors[]='電話番号を入力してください。';
   if(!$date)  $errors[]='日付を選択してください。';
   if(!$time)  $errors[]='時間を選択してください。';
   if(!$menu)  $errors[]='メニューを選択してください。';
+  if(!empty($errors)) wp_send_json_error(['msg'=>implode('<br>',$errors)]);
 
-  if(!empty($errors)){
-    error_log('❌ バリデーションエラー: ' . implode(' / ', $errors));
-    wp_send_json_error(['msg'=>implode('<br>',$errors)]);
+  // ▼ 指名なし → 自動担当割当
+  // ▼ 指名なし → 自動担当割当（確実に空きスタッフを検出）
+$auto_assigned = 0;
+if ($staff === 0) {
+  $staffs = salon_get_staff_users();
+  foreach ($staffs as $s) {
+    $uid = $s->ID;
+    $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
+    if (empty($menu_settings[$menu]['enabled'])) continue;
+
+    // ▼ 出勤中かつ予約可能か？
+    if (salon_is_staff_available($uid, $date, $time)) {
+
+      // 追加チェック：このスタッフのこの時間帯が他予約と被っていないか？
+      $already = get_posts([
+        'post_type'   => 'reservation',
+        'post_status' => 'publish',
+        'numberposts' => 1,
+        'meta_query'  => [
+          'relation' => 'AND',
+          ['key' => 'res_date', 'value' => $date],
+          ['key' => 'res_time', 'value' => $time],
+          ['key' => 'res_staff', 'value' => $uid],
+        ]
+      ]);
+
+      if (empty($already)) {
+        $staff = $uid;
+        $auto_assigned = 1;
+        error_log("🎯 自動割当: {$uid} に設定（{$s->display_name}）");
+        break;
+      }
+    }
   }
+}
 
-  // ▼ スタッフ空き確認
-  if($staff>0 && !salon_is_staff_available($staff,$date,$time)){
-    error_log('❌ スタッフ空きなし: staff='.$staff.' date='.$date.' time='.$time);
-    wp_send_json_error(['msg'=>'申し訳ありません。この時間はすでに予約が埋まっています。']);
-  }
 
-  // ▼ 予約投稿を先に生成
+  // ✅ ログ確認用
+  error_log("✅ 自動割当結果: staff={$staff} auto={$auto_assigned}");
+
+  // ▼ 予約投稿を生成
   $post_id = wp_insert_post([
     'post_type'   => 'reservation',
     'post_status' => 'publish',
@@ -99,38 +127,6 @@ function salon_submit_reservation() {
     wp_send_json_error(['msg' => '予約の登録に失敗しました。']);
   }
 
-  // ▼ 指名なし → 自動担当割当
-  $auto_assigned = 0;
-  if ($staff === 0) {
-    $staffs = salon_get_staff_users();
-    foreach ($staffs as $s) {
-      $uid = $s->ID;
-      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
-      if (!empty($menu_settings[$menu]['enabled']) && salon_is_staff_available($uid, $date, $time)) {
-        $staff = $uid;
-        $auto_assigned = 1;
-        break;
-      }
-    }
-  }
-
-  // ▼ 指名料・料金処理
-  $store = salon_get_store_settings();
-  $nomination_fee = intval($store['nomination_fee'] ?? 0);
-  $menus = $store['menus'] ?? [];
-  $total_price = 0;
-
-  foreach ($menus as $m) {
-    if ($m['name'] === $menu) {
-      $total_price = intval($m['price']);
-      break;
-    }
-  }
-
-  if ($staff > 0 && intval($_POST['staff'] ?? 0) > 0 && $nomination_fee > 0) {
-    $total_price += $nomination_fee;
-  }
-
   // ▼ メタ保存
   update_post_meta($post_id, 'res_name', $name);
   update_post_meta($post_id, 'res_tel', $tel);
@@ -138,19 +134,19 @@ function salon_submit_reservation() {
   update_post_meta($post_id, 'res_date', $date);
   update_post_meta($post_id, 'res_time', $time);
   update_post_meta($post_id, 'res_menu', $menu);
-  update_post_meta($post_id, 'res_staff', $staff);
+  update_post_meta($post_id, 'res_staff', intval($staff)); // ← ここで確実に保存
+  update_post_meta($post_id, 'res_auto_assigned', intval($auto_assigned));
   update_post_meta($post_id, 'res_datetime', "$date $time:00");
-  update_post_meta($post_id, 'res_auto_assigned', $auto_assigned);
-  update_post_meta($post_id, 'res_nomination_fee', ($staff > 0 && intval($_POST['staff'] ?? 0) > 0) ? $nomination_fee : 0);
-  update_post_meta($post_id, 'res_total', $total_price);
 
-  // ▼ 通知メール
+  // ▼ 通知メールなど
   if (function_exists('salon_send_reservation_mail')) {
     salon_send_reservation_mail($post_id);
   }
 
   wp_send_json_success(['msg' => 'ご予約を受け付けました。']);
 }
+
+
 
 
 /**

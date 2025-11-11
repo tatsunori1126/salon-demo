@@ -115,56 +115,61 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
       </tr>
     </thead>
     <tbody>
-      <?php foreach ($times as $time): ?>
-        <tr>
-          <td class="time-col"><?php echo esc_html($time); ?></td>
-          <?php foreach ($week_dates as $d):
-            $wd = date('w', strtotime($d));
-            if (in_array((string)$wd, $holidays, true)) {
-              echo '<td class="holiday">休</td>';
-              continue;
-            }
+    <?php foreach ($times as $time): ?>
+  <tr>
+    <td class="time-col"><?php echo esc_html($time); ?></td>
+    <?php foreach ($week_dates as $d):
+      $wd = date('w', strtotime($d));
+      if (in_array((string)$wd, $holidays, true)) {
+        echo '<td class="holiday">休</td>';
+        continue;
+      }
 
-            $is_available = false;
-            $is_booked    = false;
-            $available_staff_id = 0;
+      // ===== 新ロジックここから =====
+      $has_shift   = false;          // 出勤しているスタッフがいるか
+      $has_vacancy = false;          // 1人でも空きがあるか
+      $is_fully_booked = true;       // 全員埋まっているか
 
-            // ✅ 全スタッフ確認（continueで正しいループ継続）
-            foreach ($staffs as $s) {
-              $uid = $s->ID;
-              $ym  = date('Ym', strtotime($d));
-              $day = (int)date('j', strtotime($d));
-              $shift = $shifts[$uid][$day] ?? null;
+      foreach ($staffs as $s) {
+        $uid = $s->ID;
+        $ym  = date('Ym', strtotime($d));
+        $day = (int)date('j', strtotime($d));
+        $shift = $shifts[$uid][$day] ?? null;
 
-              if (!$shift || empty($shift['start']) || empty($shift['end'])) continue;
+        if (!$shift || empty($shift['start']) || empty($shift['end'])) continue;
+        if (!salon_between($time, $shift['start'], $shift['end'])) continue;
 
-              if (salon_between($time, $shift['start'], $shift['end'])) {
-                $is_available = true;
-                $available_staff_id = $uid;
+        $has_shift = true;
 
-                // ✅ 指名予約 or 指名なし予約 両方チェック
-                if (!empty($booked[$uid][$d][$time]) || !empty($booked[0][$d][$time])) {
-                  $is_booked = true;
-                  break;
-                }
-              }
-            }
+        // そのスタッフが予約されているか（指名・指名なし両方チェック）
+        $is_booked = !empty($booked[$uid][$d][$time]) || !empty($booked[0][$d][$time]);
 
-            if ($is_booked) {
-              echo '<td class="booked">×</td>';
-            } elseif ($is_available) {
-              printf(
-                '<td class="available"><button type="button" class="slot-btn" data-date="%s" data-time="%s" data-staff="%d">○</button></td>',
-                esc_attr($d),
-                esc_attr($time),
-                intval($available_staff_id)
-              );
-            } else {
-              echo '<td class="off">—</td>';
-            }
-          endforeach; ?>
-        </tr>
-      <?php endforeach; ?>
+        // 1人でも空きがあれば○にする
+        if (!$is_booked) {
+          $has_vacancy = true;
+          $is_fully_booked = false;
+          break;
+        }
+      }
+
+      // 出力制御
+      if (!$has_shift) {
+        echo '<td class="off">—</td>';
+      } elseif ($has_vacancy) {
+        printf(
+          '<td class="available"><button type="button" class="slot-btn" data-date="%s" data-time="%s" data-staff="0">○</button></td>',
+          esc_attr($d),
+          esc_attr($time)
+        );
+      } else {
+        echo '<td class="booked">×</td>';
+      }
+      // ===== 新ロジックここまで =====
+
+    endforeach; ?>
+  </tr>
+<?php endforeach; ?>
+
     </tbody>
   </table>
   <?php

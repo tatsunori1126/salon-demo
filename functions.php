@@ -53,17 +53,24 @@ add_action('manage_reservation_posts_custom_column', function($col, $id) {
       if ($v) echo '<a href="mailto:' . esc_attr($v) . '">' . esc_html($v) . '</a>';
       break;
 
-    case 'res_staff':
-      $v = intval($v);
-      $u = $v ? get_userdata($v) : null;
-      $auto = intval(get_post_meta($id, 'res_auto_assigned', true));
-      if ($u) {
-        echo esc_html($u->display_name);
-        if ($auto) echo '（指名なし）';
-      } else {
-        echo '指名なし';
-      }
-      break;
+      case 'res_staff':
+        $staff_id = intval(get_post_meta($id, 'res_staff', true));
+        $auto     = intval(get_post_meta($id, 'res_auto_assigned', true));
+      
+        // ✅ ログで確認
+        error_log('=== 管理画面表示チェック ===');
+        error_log('post_id=' . $id . ' staff_id=' . $staff_id . ' auto=' . $auto);
+      
+        $u = $staff_id ? get_userdata($staff_id) : null;
+        $staff_name = $u ? $u->display_name : '指名なし';
+      
+        if ($auto === 1) {
+          echo esc_html($staff_name) . '（指名なし）';
+        } else {
+          echo esc_html($staff_name);
+        }
+        break;
+      
 
     case 'res_actions':
       $edit_url  = get_edit_post_link($id);
@@ -78,6 +85,9 @@ add_action('manage_reservation_posts_custom_column', function($col, $id) {
       echo esc_html($v ?: '');
   }
 }, 10, 2);
+
+
+
 
 
 
