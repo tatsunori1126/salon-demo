@@ -89,3 +89,60 @@ add_action('admin_enqueue_scripts', function($hook){
     );
   }
 });
+
+/***********************************************************
+ * 👤 ユーザー追加：デフォルト権限を「サロンスタッフ」に変更
+ ***********************************************************/
+add_filter('default_role', function() {
+  return 'salon_staff'; // デフォルトを「サロンスタッフ」に設定
+});
+
+/***********************************************************
+* 🧹 重複ロール「サロンスタッフ」の整理
+***********************************************************/
+add_action('init', function() {
+  global $wp_roles;
+
+  if (!isset($wp_roles)) {
+      $wp_roles = new WP_Roles();
+  }
+
+  $roles = $wp_roles->roles;
+  $duplicate_roles = [];
+
+  // 「サロンスタッフ」という表示名が複数ある場合
+  foreach ($roles as $key => $role) {
+      if (isset($role['name']) && $role['name'] === 'サロンスタッフ') {
+          $duplicate_roles[] = $key;
+      }
+  }
+
+  // 重複していれば、1つを残して残り削除
+  if (count($duplicate_roles) > 1) {
+      array_shift($duplicate_roles);
+      foreach ($duplicate_roles as $role_key) {
+          remove_role($role_key);
+      }
+  }
+});
+
+/***********************************************************
+ * 👤 管理画面：ユーザー追加時のデフォルト権限を「サロンスタッフ」に変更（フォーム反映版）
+ ***********************************************************/
+add_action('admin_footer-user-new.php', function() {
+  ?>
+  <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const roleSelect = document.getElementById('role');
+    if (roleSelect) {
+      // デフォルト選択を「サロンスタッフ」に変更
+      const salonStaffOption = [...roleSelect.options].find(opt => opt.textContent.includes('サロンスタッフ'));
+      if (salonStaffOption) {
+        roleSelect.value = salonStaffOption.value;
+      }
+    }
+  });
+  </script>
+  <?php
+  });
+  

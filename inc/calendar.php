@@ -86,12 +86,17 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
   }
 
   // ===== 出勤データの取得 =====
-  $shifts = [];
-  foreach ($staffs as $s) {
-    $uid = $s->ID;
-    $ym = date('Ym');
+  // ===== 出勤データの取得 =====
+$shifts = [];
+foreach ($staffs as $s) {
+  $uid = $s->ID;
+  $shifts[$uid] = [];
+
+  foreach ($week_dates as $d) {
+    $ym = date('Ym', strtotime($d)); // ← 📅 日付に対応する月を取得
     $meta_key = salon_shift_meta_key($ym);
     $shift_data = get_user_meta($uid, $meta_key, true);
+
     $fixed = [];
     foreach ((array)$shift_data as $k => $v) {
       if (isset($v['s']) || isset($v['e'])) {
@@ -100,11 +105,22 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
         $fixed[(int)$k] = $v;
       }
     }
-    $shifts[$uid] = $fixed;
+    $day = (int)date('j', strtotime($d));
+    if (isset($fixed[$day])) {
+      $shifts[$uid][$day] = $fixed[$day];
+    }
   }
+}
+
 
   // ===== 出力 =====
   ob_start(); ?>
+  <!-- ▼ 週ナビゲーション -->
+<div class="calendar-nav" data-week="<?php echo intval($week); ?>">
+  <button type="button" class="cal-prev-week">← 前の週</button>
+  <button type="button" class="cal-this-week">今週</button>
+  <button type="button" class="cal-next-week">次の週 →</button>
+</div>
   <table class="calendar-table">
     <thead>
       <tr>

@@ -592,3 +592,22 @@
 .confirm-row dd {
   margin: 0;
 }
+
+
+.calendar-nav {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.calendar-nav button {
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.calendar-nav button:hover {
+  background: #f5f5f5;
+}

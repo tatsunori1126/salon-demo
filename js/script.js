@@ -3,67 +3,101 @@
  *  サロン予約モーダルカレンダー（モーダル内専用）
  * ---------------------------------------------------
  */
+/**
+ * ---------------------------------------------------
+ *  サロン予約モーダルカレンダー（モーダル内専用）
+ * ---------------------------------------------------
+ */
 document.addEventListener('DOMContentLoaded', function() {
-    const modal = document.getElementById('reservation-modal');
-    if (!modal) return; // ← モーダルがないページでは実行しない
-  
-    const modalCal = document.getElementById('modal-calendar');
-    let selMenuKey = '', selStaffId = '', modalWeek = 0, selDate = '', selTime = '';
-  
-    // ✅ モーダルカレンダーの描画関数（1回だけ定義）
-function renderModalCalendar() {
-  const fd = new FormData();
-  fd.append('action', 'salon_render_calendar_front');
-  fd.append('menu', selMenuKey);
-  fd.append('staff', selStaffId);
-  fd.append('week', modalWeek);
-  fd.append('mode', 'front'); // ←★これを絶対入れる
+  const modal = document.getElementById('reservation-modal');
+  if (!modal) return; // ← モーダルがないページでは実行しない
 
-  modalCal.innerHTML = '読み込み中…';
+  const modalCal = document.getElementById('modal-calendar');
+  let selMenuKey = '', selStaffId = '', modalWeek = 0, selDate = '', selTime = '';
 
-  fetch(salon_ajax.url, { method: 'POST', body: fd })
-    .then(r => r.text())
-    .then(html => {
-      modalCal.innerHTML = html;
-      const slots = modalCal.querySelectorAll('.slot-btn');
-      console.log('slot-btn count:', slots.length);
-      slots.forEach(btn => {
-        btn.addEventListener('click', () => {
-          selDate = btn.dataset.date;
-          selTime = btn.dataset.time;
-          selStaffId = btn.dataset.staff;
+  // ======== カレンダー生成関数 ========
+  function renderModalCalendar() {
+    const fd = new FormData();
+    fd.append('action', 'salon_render_calendar_front');
+    fd.append('menu', selMenuKey);
+    fd.append('staff', selStaffId);
+    fd.append('week', modalWeek);
+    fd.append('mode', 'front'); // ←★これを絶対入れる
 
-          const fName  = document.querySelector('#your-name') || document.querySelector('#f-name');
-          const fEmail = document.querySelector('#your-email') || document.querySelector('#f-email');
-          const fTel   = document.querySelector('#your-tel') || document.querySelector('#f-tel');
+    modalCal.innerHTML = '読み込み中…';
 
-          const menuSelect = document.querySelector('#m-menu') || document.querySelector('#res_menu') || document.querySelector('#menu_key');
-          const selMenuLabel = menuSelect?.options?.[menuSelect.selectedIndex]?.textContent || '-';
+    fetch(salon_ajax.url, { method: 'POST', body: fd })
+      .then(r => r.text())
+      .then(html => {
+        modalCal.innerHTML = html;
 
-          const staffSelect = document.querySelector('#m-staff') || document.querySelector('#res_staff') || document.querySelector('#staff_id');
-          const selStaffName = staffSelect?.options?.[staffSelect.selectedIndex]?.textContent || '自動割当';
+        const slots = modalCal.querySelectorAll('.slot-btn');
+        console.log('slot-btn count:', slots.length);
 
-          const step2 = document.querySelector('#step-2');
-          const step3 = document.querySelector('#step-3');
+        slots.forEach(btn => {
+          btn.addEventListener('click', () => {
+            selDate = btn.dataset.date;
+            selTime = btn.dataset.time;
+            selStaffId = btn.dataset.staff;
 
-          document.getElementById('c-name').textContent  = fName?.value || '-';
-          document.getElementById('c-email').textContent = fEmail?.value || '-';
-          document.getElementById('c-tel').textContent   = fTel?.value || '-';
-          document.getElementById('c-menu').textContent  = selMenuLabel;
-          document.getElementById('c-staff').textContent = selStaffName;
-          document.getElementById('c-datetime').textContent = `${selDate} ${selTime}`;
+            const fName  = document.querySelector('#your-name') || document.querySelector('#f-name');
+            const fEmail = document.querySelector('#your-email') || document.querySelector('#f-email');
+            const fTel   = document.querySelector('#your-tel') || document.querySelector('#f-tel');
 
-          if (step2 && step3) {
-            step2.style.display = 'none';
-            step3.style.display = 'block';
-          } else {
-            console.warn('step-2 または step-3 が見つかりません');
-          }
+            const menuSelect = document.querySelector('#m-menu') || document.querySelector('#res_menu') || document.querySelector('#menu_key');
+            const selMenuLabel = menuSelect?.options?.[menuSelect.selectedIndex]?.textContent || '-';
+
+            const staffSelect = document.querySelector('#m-staff') || document.querySelector('#res_staff') || document.querySelector('#staff_id');
+            const selStaffName = staffSelect?.options?.[staffSelect.selectedIndex]?.textContent || '自動割当';
+
+            const step2 = document.querySelector('#step-2');
+            const step3 = document.querySelector('#step-3');
+
+            document.getElementById('c-name').textContent  = fName?.value || '-';
+            document.getElementById('c-email').textContent = fEmail?.value || '-';
+            document.getElementById('c-tel').textContent   = fTel?.value || '-';
+            document.getElementById('c-menu').textContent  = selMenuLabel;
+            document.getElementById('c-staff').textContent = selStaffName;
+            document.getElementById('c-datetime').textContent = `${selDate} ${selTime}`;
+
+            if (step2 && step3) {
+              step2.style.display = 'none';
+              step3.style.display = 'block';
+            } else {
+              console.warn('step-2 または step-3 が見つかりません');
+            }
+          });
         });
-      });
-    })
-    .catch(() => { modalCal.innerHTML = '読み込み失敗'; });
-}
+      })
+      .catch(() => { modalCal.innerHTML = '読み込み失敗'; });
+  }
+
+  // ======== 過去週ブロック付き：モーダル週切り替え ========
+  modal.addEventListener('click', e => {
+    const btn = e.target.closest('.cal-prev-week, .cal-next-week, .cal-this-week');
+    if (!btn) return;
+
+    let newWeek = modalWeek;
+
+    if (btn.classList.contains('cal-prev-week')) newWeek--;
+    if (btn.classList.contains('cal-next-week')) newWeek++;
+    if (btn.classList.contains('cal-this-week')) newWeek = 0;
+
+    // 🚫 過去週への切り替えを禁止
+    if (newWeek < 0) {
+      console.log('⛔ 過去週への切り替えは無効');
+      return;
+    }
+
+    modalWeek = newWeek;
+    console.log('🌀 モーダル週切り替え:', modalWeek);
+
+    renderModalCalendar();
+  });
+
+
+
+
 
 // ---------------------------------------------------
 // 担当選択時にのみカレンダー再描画（メニュー変更時はまだ描画しない）
