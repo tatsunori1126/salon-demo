@@ -296,7 +296,9 @@ if (!function_exists('salon_generate_readonly_calendar')) {
     $today = strtotime('today');
     $start = strtotime('+' . (7 * intval($week)) . ' days', $today);
     $week_dates = [];
-    for ($i = 0; $i < 7; $i++) $week_dates[] = date('Y-m-d', strtotime("+$i day", $start));
+    for ($i = 0; $i < 7; $i++) {
+      $week_dates[] = date('Y-m-d', strtotime("+$i day", $start));
+    }
 
     ob_start(); ?>
     <div class="salon-calendar readonly">
@@ -322,57 +324,68 @@ if (!function_exists('salon_generate_readonly_calendar')) {
                   continue;
                 }
 
-                $available_staffs = [];
+                // ===============================
+                // 出勤・予約状況チェック（改良版）
+                // ===============================
+                $has_shift = false;
+                $has_vacancy = false;
+
                 foreach ($staffs as $u) {
-                  if (salon_is_staff_available($u->ID, $d, $time)) {
-                    $available_staffs[] = $u->ID;
+                  $uid = $u->ID;
+                  if (!salon_is_staff_available($uid, $d, $time)) continue;
+                  $has_shift = true;
+
+                  // この時間に予約が入っているかチェック
+                  $q = new WP_Query([
+                    'post_type'      => 'reservation',
+                    'post_status'    => 'any',
+                    'posts_per_page' => -1,
+                    'meta_query'     => [
+                      'relation' => 'AND',
+                      ['key' => 'res_date', 'value' => $d],
+                      [
+                        'relation' => 'OR',
+                        ['key' => 'res_staff', 'value' => (string)$uid, 'compare' => '='],
+                        ['key' => 'res_staff', 'value' => '0', 'compare' => '='], // 指名なし含む
+                      ],
+                    ],
+                  ]);
+
+                  $is_booked = false;
+                  if ($q->have_posts()) {
+                    while ($q->have_posts()) {
+                      $q->the_post();
+                      $res_time = get_post_meta(get_the_ID(), 'res_time', true);
+                      $menu     = get_post_meta(get_the_ID(), 'res_menu', true);
+                      $settings = get_user_meta($uid, 'salon_menu_settings', true) ?: [];
+                      $dur      = intval($settings[$menu]['duration'] ?? 60);
+                      $start_ts = strtotime("$d $res_time");
+                      $end_ts   = $start_ts + ($dur * 60);
+                      $chk_ts   = strtotime("$d $time");
+                      if ($chk_ts >= $start_ts && $chk_ts < $end_ts) {
+                        $is_booked = true;
+                        break;
+                      }
+                    }
+                    wp_reset_postdata();
+                  }
+
+                  // ✅ 誰か1人でも空いていたら即「○」
+                  if (!$is_booked) {
+                    $has_vacancy = true;
+                    break;
                   }
                 }
 
-                if (empty($available_staffs)) {
+                // ===============================
+                // 表示出力
+                // ===============================
+                if (!$has_shift) {
                   echo '<td class="off">—</td>';
+                } elseif ($has_vacancy) {
+                  echo '<td class="available">○</td>';
                 } else {
-                  $is_booked = false;
-                  foreach ($available_staffs as $sid) {
-                    $q = new WP_Query([
-                      'post_type'      => 'reservation',
-                      'post_status'    => 'any',
-                      'posts_per_page' => -1,
-                      'meta_query'     => [
-                        'relation' => 'AND',
-                        [
-                          'key'   => 'res_date',
-                          'value' => $d,
-                        ],
-                        [
-                          'relation' => 'OR',
-                          ['key' => 'res_staff', 'value' => (string)$sid, 'compare' => '='],
-                          ['key' => 'res_staff', 'value' => '0', 'compare' => '='],
-                        ],
-                      ],
-                    ]);
-                    if ($q->have_posts()) {
-                      while ($q->have_posts()) {
-                        $q->the_post();
-                        $res_time = get_post_meta(get_the_ID(), 'res_time', true);
-                        $menu     = get_post_meta(get_the_ID(), 'res_menu', true);
-                        $settings = get_user_meta($sid, 'salon_menu_settings', true) ?: [];
-                        $dur      = intval($settings[$menu]['duration'] ?? 60);
-                        $start_ts = strtotime("$d $res_time");
-                        $end_ts   = $start_ts + ($dur * 60);
-                        $chk_ts   = strtotime("$d $time");
-                        if ($chk_ts >= $start_ts && $chk_ts < $end_ts) {
-                          $is_booked = true;
-                          break 2;
-                        }
-                      }
-                      wp_reset_postdata();
-                    }
-                  }
-
-                  echo $is_booked
-                    ? '<td class="booked">×</td>'
-                    : '<td class="available">○</td>';
+                  echo '<td class="booked">×</td>';
                 }
               endforeach; ?>
             </tr>
