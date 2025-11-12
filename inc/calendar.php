@@ -55,17 +55,18 @@ if ($staff_id > 0) {
     $selected_menu_duration = intval($menu_settings[$menu_key]['duration']);
   }
 } else {
-  // 指名なし：有効スタッフの平均 or 最初の設定値
-  $durations = [];
-  foreach ($staffs as $s) {
-    $settings = get_user_meta($s->ID, 'salon_menu_settings', true);
-    if (!empty($settings[$menu_key]['duration'])) {
-      $durations[] = intval($settings[$menu_key]['duration']);
-    }
+  // 指名なし：有効スタッフの「最長施術時間」を採用（安全側）
+$durations = [];
+foreach ($staffs as $s) {
+  $settings = get_user_meta($s->ID, 'salon_menu_settings', true);
+  if (!empty($settings[$menu_key]['duration'])) {
+    $durations[] = intval($settings[$menu_key]['duration']);
   }
-  if (!empty($durations)) {
-    $selected_menu_duration = intval(array_sum($durations) / count($durations));
-  }
+}
+if (!empty($durations)) {
+  $selected_menu_duration = max($durations);
+}
+
 }
 
 foreach ($posts as $p) {
