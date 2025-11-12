@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) exit;
 
 /***********************************************************
- * フロント用カレンダー生成（指名あり／なし対応）【祝日個別＋臨時休業対応 完全版】
+ * フロント用カレンダー生成（指名あり／なし対応）【祝日個別＋臨時休業＋施術時間対応 完全版】
  ***********************************************************/
 function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode = 'front') {
   date_default_timezone_set('Asia/Tokyo');
@@ -35,52 +35,78 @@ function salon_generate_calendar_html($menu_key, $staff_id = 0, $week = 0, $mode
     }
   }
 
-  // ====== 予約情報の取得（ブロック考慮＋全スタッフ対応） ======
-  $booked = [];
-  $posts = get_posts([
-    'post_type'   => 'reservation',
-    'post_status' => 'publish',
-    'numberposts' => -1,
-    'meta_query'  => [
-      ['key' => 'res_date', 'value' => $week_dates, 'compare' => 'IN']
-    ]
-  ]);
+  // ====== 予約情報の取得（ブロック考慮＋施術時間対応） ======
+$booked = [];
+$posts = get_posts([
+  'post_type'   => 'reservation',
+  'post_status' => 'publish',
+  'numberposts' => -1,
+  'meta_query'  => [
+    ['key' => 'res_date', 'value' => $week_dates, 'compare' => 'IN']
+  ]
+]);
 
-  foreach ($posts as $p) {
-    $pid   = $p->ID;
-    $date  = get_post_meta($pid, 'res_date', true);
-    $time  = get_post_meta($pid, 'res_time', true);
-    $sid   = intval(get_post_meta($pid, 'res_staff', true));
-    $menu  = get_post_meta($pid, 'res_menu', true);
-    if (!$date || !$time) continue;
-
-    // メニュー時間取得
-    $menu_duration = 60;
-    $base_staff = ($sid > 0) ? get_userdata($sid) : current(salon_get_staff_users());
-    if ($base_staff) {
-      $settings = get_user_meta($base_staff->ID, 'salon_menu_settings', true);
-      $menu_duration = intval($settings[$menu]['duration'] ?? 60);
+// ✅ 新規予約メニューの施術時間を取得（スタッフ依存）
+$selected_menu_duration = 60;
+if ($staff_id > 0) {
+  // 指名あり
+  $menu_settings = get_user_meta($staff_id, 'salon_menu_settings', true);
+  if (!empty($menu_settings[$menu_key]['duration'])) {
+    $selected_menu_duration = intval($menu_settings[$menu_key]['duration']);
+  }
+} else {
+  // 指名なし：有効スタッフの平均 or 最初の設定値
+  $durations = [];
+  foreach ($staffs as $s) {
+    $settings = get_user_meta($s->ID, 'salon_menu_settings', true);
+    if (!empty($settings[$menu_key]['duration'])) {
+      $durations[] = intval($settings[$menu_key]['duration']);
     }
+  }
+  if (!empty($durations)) {
+    $selected_menu_duration = intval(array_sum($durations) / count($durations));
+  }
+}
 
-    $start_ts = strtotime("$date $time");
-    $before_minutes = $menu_duration - $time_step;
-    $block_start_ts = strtotime("-{$before_minutes} minutes", $start_ts);
-    $block_end_ts   = strtotime("+{$menu_duration} minutes", $start_ts);
+foreach ($posts as $p) {
+  $pid   = $p->ID;
+  $date  = get_post_meta($pid, 'res_date', true);
+  $time  = get_post_meta($pid, 'res_time', true);
+  $sid   = intval(get_post_meta($pid, 'res_staff', true));
+  $menu  = get_post_meta($pid, 'res_menu', true);
+  if (!$date || !$time) continue;
 
-    $target_staffs = ($sid === 0) ? salon_get_staff_users() : [get_userdata($sid)];
+  // 予約済みメニューの施術時間を取得
+  $menu_duration = 60;
+  $base_staff = ($sid > 0) ? get_userdata($sid) : current(salon_get_staff_users());
+  if ($base_staff) {
+    $settings = get_user_meta($base_staff->ID, 'salon_menu_settings', true);
+    $menu_duration = intval($settings[$menu]['duration'] ?? 60);
+  }
 
-    foreach ($target_staffs as $stf) {
-      if (!$stf) continue;
-      $uid = $stf->ID;
-      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
-      if (!empty($menu_settings[$menu]['enabled']) && intval($menu_settings[$menu]['enabled']) === 1) {
-        for ($t = $block_start_ts; $t < $block_end_ts; $t += ($time_step * 60)) {
-          $block_time = date('H:i', $t);
-          $booked[$uid][$date][$block_time] = true;
-        }
+  $start_ts = strtotime("$date $time");
+  $end_ts   = $start_ts + ($menu_duration * 60);
+
+  $target_staffs = ($sid === 0) ? salon_get_staff_users() : [get_userdata($sid)];
+
+  foreach ($target_staffs as $stf) {
+    if (!$stf) continue;
+    $uid = $stf->ID;
+
+    // 1日分の全スロットを走査して「新規施術時間分」を仮定して重なりチェック
+    foreach ($times as $slot_time) {
+      $slot_start_ts = strtotime("$date $slot_time");
+      $slot_end_ts   = $slot_start_ts + ($selected_menu_duration * 60); // 新規の施術時間を想定
+
+      // 🔥重なり判定：既存予約時間と新規予約想定時間が1分でもかぶったら×
+      if ($slot_start_ts < $end_ts && $slot_end_ts > $start_ts) {
+        $booked[$uid][$date][$slot_time] = true;
       }
     }
   }
+}
+
+
 
   // ===== 出勤データの取得 =====
   $shifts = [];
