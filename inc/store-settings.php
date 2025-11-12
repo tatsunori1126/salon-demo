@@ -242,6 +242,20 @@ function salon_get_japan_holidays() {
   $url = 'https://holidays-jp.github.io/api/v1/date.json';
   $response = wp_remote_get($url, ['timeout' => 5]);
   if (is_wp_error($response)) return [];
+
   $json = json_decode(wp_remote_retrieve_body($response), true);
-  return is_array($json) ? $json : [];
+  if (!is_array($json)) return [];
+
+  $today = date('Y-m-d');
+  $next_year = date('Y-m-d', strtotime('+1 year'));
+
+  // ✅ 当日以降〜1年後までの祝日だけ抽出
+  $filtered = [];
+  foreach ($json as $date => $name) {
+    if ($date >= $today && $date <= $next_year) {
+      $filtered[$date] = $name;
+    }
+  }
+  return $filtered;
 }
+
