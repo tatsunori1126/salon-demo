@@ -137,3 +137,59 @@ if (!function_exists('salon_is_staff_available')) {
     return ($t >= $s && $t < $e);
   }
 }
+
+/** ----------------------------------------------
+ * 重複予約チェック（施術時間も考慮 + デバッグログ入り）
+ * ---------------------------------------------- */
+if (!function_exists('salon_is_time_available')) {
+  function salon_is_time_available($staff_id, $date, $time, $duration) {
+
+    error_log("=== [CHECK START] staff={$staff_id} date={$date} time={$time} duration={$duration} ===");
+
+    $start_ts = strtotime("$date $time");
+    $end_ts   = $start_ts + ($duration * 60);
+
+    // ▼ 対象スタッフの“同日の既存予約”を取得
+    $reservations = get_posts([
+      'post_type'   => 'reservation',
+      'post_status' => 'publish',
+      'numberposts' => -1,
+      'meta_query'  => [
+        ['key' => 'res_date',  'value' => $date],
+        ['key' => 'res_staff', 'value' => $staff_id],
+      ]
+    ]);
+
+    error_log("=== existing_reservations_count=" . count($reservations) . " ===");
+
+    foreach ($reservations as $r) {
+
+      $r_time = get_post_meta($r->ID, 'res_time', true);
+      $r_menu = get_post_meta($r->ID, 'res_menu', true);
+
+      // ▼ 施術時間は meta から取得（※超重要）
+      $r_duration = intval(get_post_meta($r->ID, 'res_duration', true));
+
+      if ($r_duration <= 0) {
+        error_log("!!! WARNING: res_duration missing for reservation {$r->ID}");
+      }
+
+      $r_start = strtotime("$date $r_time");
+      $r_end   = $r_start + ($r_duration * 60);
+
+      error_log(">>> R[{$r->ID}] time={$r_time}, menu={$r_menu}, duration={$r_duration}");
+      error_log(">>> R range = {$r_start} - {$r_end}, New = {$start_ts} - {$end_ts}");
+
+      // ▼ 1分でもかぶっていれば NG
+      if ($start_ts < $r_end && $end_ts > $r_start) {
+        error_log("!!! conflict FOUND with reservation {$r->ID} !!!");
+        return false;
+      }
+    }
+
+    error_log("=== [CHECK END] OK ===");
+    return true;
+  }
+}
+
+

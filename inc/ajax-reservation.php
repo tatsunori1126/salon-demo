@@ -66,7 +66,7 @@ function salon_submit_reservation() {
   $menu   = sanitize_text_field($_POST['menu']   ?? '');
   $staff  = intval($_POST['staff'] ?? 0); // ← 初期値は0（指名なし）
 
-  // バリデーション
+  // ▼ バリデーション
   $errors = [];
   if(!$name)  $errors[]='お名前を入力してください。';
   if(!$tel)   $errors[]='電話番号を入力してください。';
@@ -76,44 +76,56 @@ function salon_submit_reservation() {
   if(!empty($errors)) wp_send_json_error(['msg'=>implode('<br>',$errors)]);
 
   // ▼ 指名なし → 自動担当割当
-  // ▼ 指名なし → 自動担当割当（確実に空きスタッフを検出）
-$auto_assigned = 0;
-if ($staff === 0) {
-  $staffs = salon_get_staff_users();
-  foreach ($staffs as $s) {
-    $uid = $s->ID;
-    $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
-    if (empty($menu_settings[$menu]['enabled'])) continue;
+  $auto_assigned = 0;
+  if ($staff === 0) {
+    $staffs = salon_get_staff_users();
+    foreach ($staffs as $s) {
+      $uid = $s->ID;
+      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
+      if (empty($menu_settings[$menu]['enabled'])) continue;
 
-    // ▼ 出勤中かつ予約可能か？
-    if (salon_is_staff_available($uid, $date, $time)) {
+      // ▼ 出勤中かつ予約可能か？
+      if (salon_is_staff_available($uid, $date, $time)) {
 
-      // 追加チェック：このスタッフのこの時間帯が他予約と被っていないか？
-      $already = get_posts([
-        'post_type'   => 'reservation',
-        'post_status' => 'publish',
-        'numberposts' => 1,
-        'meta_query'  => [
-          'relation' => 'AND',
-          ['key' => 'res_date', 'value' => $date],
-          ['key' => 'res_time', 'value' => $time],
-          ['key' => 'res_staff', 'value' => $uid],
-        ]
-      ]);
+        // 追加チェック：このスタッフのこの時間帯が他予約と被っていないか？
+        $already = get_posts([
+          'post_type'   => 'reservation',
+          'post_status' => 'publish',
+          'numberposts' => 1,
+          'meta_query'  => [
+            ['key' => 'res_date', 'value' => $date],
+            ['key' => 'res_time', 'value' => $time],
+            ['key' => 'res_staff', 'value' => $uid],
+          ]
+        ]);
 
-      if (empty($already)) {
-        $staff = $uid;
-        $auto_assigned = 1;
-        error_log("🎯 自動割当: {$uid} に設定（{$s->display_name}）");
-        break;
+        if (empty($already)) {
+          $staff = $uid;
+          $auto_assigned = 1;
+          error_log("🎯 自動割当: {$uid} に設定（{$s->display_name}）");
+          break;
+        }
       }
     }
   }
-}
 
-
-  // ✅ ログ確認用
+  // ▼ ログ確認用
   error_log("✅ 自動割当結果: staff={$staff} auto={$auto_assigned}");
+
+
+  // ▼ スタッフごとの施術時間を取得（こちらが正しい）
+$menu_settings = get_user_meta($staff, 'salon_menu_settings', true);
+$duration = intval($menu_settings[$menu]['duration'] ?? 0);
+
+error_log("◆ duration_from_staff={$duration}");
+
+  // ▼ 追加：重複予約チェック（施術時間も考慮）
+  if (!salon_is_time_available($staff, $date, $time, $duration)) {
+      wp_send_json_error([
+          'msg' => '選択した時間帯はすでに予約が入っています。他の時間をご選択ください。'
+      ]);
+  }
+
 
   // ▼ 予約投稿を生成
   $post_id = wp_insert_post([
@@ -128,15 +140,20 @@ if ($staff === 0) {
   }
 
   // ▼ メタ保存
-  update_post_meta($post_id, 'res_name', $name);
-  update_post_meta($post_id, 'res_tel', $tel);
-  update_post_meta($post_id, 'res_email', $email);
-  update_post_meta($post_id, 'res_date', $date);
-  update_post_meta($post_id, 'res_time', $time);
-  update_post_meta($post_id, 'res_menu', $menu);
-  update_post_meta($post_id, 'res_staff', intval($staff)); // ← ここで確実に保存
-  update_post_meta($post_id, 'res_auto_assigned', intval($auto_assigned));
-  update_post_meta($post_id, 'res_datetime', "$date $time:00");
+update_post_meta($post_id, 'res_name', $name);
+update_post_meta($post_id, 'res_tel', $tel);
+update_post_meta($post_id, 'res_email', $email);
+update_post_meta($post_id, 'res_date', $date);
+update_post_meta($post_id, 'res_time', $time);
+update_post_meta($post_id, 'res_menu', $menu);
+update_post_meta($post_id, 'res_staff', intval($staff));
+update_post_meta($post_id, 'res_auto_assigned', intval($auto_assigned));
+update_post_meta($post_id, 'res_datetime', "$date $time:00");
+
+// 🔥 これが重複予約防止のキー（追加する行）
+update_post_meta($post_id, 'res_duration', intval($duration));
+
+  
 
   // ▼ 通知メールなど
   if (function_exists('salon_send_reservation_mail')) {
@@ -145,6 +162,7 @@ if ($staff === 0) {
 
   wp_send_json_success(['msg' => 'ご予約を受け付けました。']);
 }
+
 
 
 
