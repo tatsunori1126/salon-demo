@@ -76,38 +76,50 @@ function salon_submit_reservation() {
   if(!empty($errors)) wp_send_json_error(['msg'=>implode('<br>',$errors)]);
 
   // ▼ 指名なし → 自動担当割当
-  $auto_assigned = 0;
-  if ($staff === 0) {
+  // ▼ 指名なし → 全スタッフから自動割当（出勤 + メニュー対応 + 重複 + duration）
+$auto_assigned = 0;
+
+if ($staff === 0) {
+
     $staffs = salon_get_staff_users();
+    $assigned_staff = 0;
+
     foreach ($staffs as $s) {
-      $uid = $s->ID;
-      $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
-      if (empty($menu_settings[$menu]['enabled'])) continue;
 
-      // ▼ 出勤中かつ予約可能か？
-      if (salon_is_staff_available($uid, $date, $time)) {
+        $uid = $s->ID;
 
-        // 追加チェック：このスタッフのこの時間帯が他予約と被っていないか？
-        $already = get_posts([
-          'post_type'   => 'reservation',
-          'post_status' => 'publish',
-          'numberposts' => 1,
-          'meta_query'  => [
-            ['key' => 'res_date', 'value' => $date],
-            ['key' => 'res_time', 'value' => $time],
-            ['key' => 'res_staff', 'value' => $uid],
-          ]
-        ]);
+        // メニュー対応可？
+        $menu_settings = get_user_meta($uid, 'salon_menu_settings', true);
+        if (empty($menu_settings[$menu]['enabled'])) continue;
 
-        if (empty($already)) {
-          $staff = $uid;
-          $auto_assigned = 1;
-          error_log("🎯 自動割当: {$uid} に設定（{$s->display_name}）");
-          break;
+        // スタッフ固有の施術時間
+        $duration = intval($menu_settings[$menu]['duration'] ?? 0);
+        if ($duration <= 0) $duration = 60; // 念のため
+
+        // 出勤チェック
+        if (!salon_is_staff_available($uid, $date, $time)) continue;
+
+        // ★ duration込みの重複チェック
+        if (!salon_is_time_available($uid, $date, $time, $duration)) {
+            continue; // このスタッフは満席
         }
-      }
+
+        // ここまで来たら割当可能
+        $assigned_staff = $uid;
+        break;
     }
-  }
+
+    if ($assigned_staff > 0) {
+        $staff = $assigned_staff;
+        $auto_assigned = 1;
+        error_log("🎯 自動割当: {$assigned_staff}");
+    } else {
+        wp_send_json_error([
+            'msg' => '現在この時間帯は全スタッフ満席です。他の時間をご選択ください。'
+        ]);
+    }
+}
+
 
   // ▼ ログ確認用
   error_log("✅ 自動割当結果: staff={$staff} auto={$auto_assigned}");
