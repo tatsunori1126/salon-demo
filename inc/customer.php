@@ -257,7 +257,7 @@ function salon_customer_reservation_history_box($post) {
         return;
     }
 
-    // この顧客の予約を取得
+    // この顧客の予約を取得（新しい順）
     $reservations = get_posts([
         'post_type'   => 'reservation',
         'numberposts' => -1,
@@ -276,58 +276,71 @@ function salon_customer_reservation_history_box($post) {
         return;
     }
 
+    // 来店回数
+    $visit_total = intval(get_post_meta($post->ID, 'visit_count', true));
+    $current_visit = $visit_total;
+
+    // --- CSV 出力ボタン ---
+    $csv_url = admin_url('admin-ajax.php?action=customer_reservation_csv&customer_id=' . $post->ID);
+    echo '<p style="text-align:right;">
+            <a href="'.esc_url($csv_url).'" class="button button-primary">CSVダウンロード</a>
+          </p>';
+
     echo '<table class="widefat"><thead><tr>
-            <th>日付</th><th>時間</th><th>メニュー</th><th>担当者</th><th>合計金額</th>
+            <th>来店回数</th>
+            <th>来店日時</th>
+            <th>時間</th>
+            <th>メニュー</th>
+            <th>担当者</th>
+            <th>合計金額</th>
           </tr></thead><tbody>';
 
-          foreach ($reservations as $r) {
+    foreach ($reservations as $r) {
 
-            $date_raw = get_post_meta($r->ID, 'res_date', true);
-            $time     = get_post_meta($r->ID, 'res_time', true);
-            $menu     = get_post_meta($r->ID, 'res_menu', true);
-            $staff_id = intval(get_post_meta($r->ID, 'res_staff', true));
-            $auto     = intval(get_post_meta($r->ID, 'res_auto_assigned', true));
-            $total_raw = get_post_meta($r->ID, 'res_total_price', true);
-        
-            // ▼ 日付を日本語表記に変換
-            // "2025-11-14" → "2025年11月14日"
-            $date_jp = date('Y年n月j日', strtotime($date_raw));
-        
-            // ▼ 担当者名
-if ($staff_id > 0) {
-    $user = get_userdata($staff_id);
-    $staff_name = $user ? $user->display_name : '不明';
+        $date_raw  = get_post_meta($r->ID, 'res_date', true);
+        $time      = get_post_meta($r->ID, 'res_time', true);
+        $menu      = get_post_meta($r->ID, 'res_menu', true);
+        $staff_id  = intval(get_post_meta($r->ID, 'res_staff', true));
+        $auto      = intval(get_post_meta($r->ID, 'res_auto_assigned', true));
+        $total_raw = get_post_meta($r->ID, 'res_total_price', true);
 
-    // 自動割当なら「（指名なし）」を付与
-    if ($auto === 1) {
-        $staff_name .= '（指名なし）';
-    }
-} else {
-    $staff_name = '指名なし';
-}
+        // 日付
+        $date_jp = date('Y年n月j日', strtotime($date_raw));
 
-        
-            // ▼ 金額の整形
-            if ($total_raw === '' || $total_raw === null) {
-                $total = '-';
-            } else {
-                $total = number_format(intval($total_raw)) . '円';
+        // 担当者名
+        if ($staff_id > 0) {
+            $user = get_userdata($staff_id);
+            $staff_name = $user ? $user->display_name : '不明';
+            if ($auto === 1) {
+                $staff_name .= '（指名なし）';
             }
-        
-            echo "<tr>
-                    <td>{$date_jp}</td>
-                    <td>{$time}</td>
-                    <td>{$menu}</td>
-                    <td>{$staff_name}</td>
-                    <td>{$total}</td>
-                 </tr>";
+        } else {
+            $staff_name = '指名なし';
         }
-        
 
-        
+        // 金額
+        $total = ($total_raw === '' || $total_raw === null)
+            ? '-'
+            : number_format(intval($total_raw)) . '円';
+
+        // 来店回数
+        $visit_label = $current_visit . ' 回目';
+
+        echo "<tr>
+                <td>{$visit_label}</td>
+                <td>{$date_jp}</td>
+                <td>{$time}</td>
+                <td>{$menu}</td>
+                <td>{$staff_name}</td>
+                <td>{$total}</td>
+              </tr>";
+
+        $current_visit--;
+    }
 
     echo '</tbody></table>';
 }
+
 
 
 /**
@@ -520,3 +533,84 @@ add_action('save_post_reservation', function ($post_id, $post, $update) {
 
 }, 10, 3);
 
+/**
+ * ▼ CSV出力処理（Shift_JIS で文字化け防止版）
+ */
+add_action('wp_ajax_customer_reservation_csv', function () {
+
+    if (!current_user_can('edit_posts')) {
+        wp_die('権限がありません。');
+    }
+
+    $cid = intval($_GET['customer_id'] ?? 0);
+    if (!$cid) wp_die('顧客IDが不正です。');
+
+    $tel   = get_post_meta($cid, 'tel', true);
+    $email = get_post_meta($cid, 'email', true);
+
+    $reservations = get_posts([
+        'post_type'   => 'reservation',
+        'numberposts' => -1,
+        'orderby'     => 'meta_value',
+        'order'       => 'DESC',
+        'meta_key'    => 'res_datetime',
+        'meta_query'  => [
+            'relation' => 'OR',
+            ['key' => 'res_tel', 'value' => $tel],
+            ['key' => 'res_email', 'value' => $email],
+        ]
+    ]);
+
+    // ▼ Excel文字化け防止 → Shift_JIS 出力
+    header('Content-Type: text/csv; charset=Shift_JIS');
+    header('Content-Disposition: attachment; filename=customer_history_' . $cid . '.csv');
+
+    $output = fopen('php://output', 'w');
+
+    // UTF-8 → Shift_JIS に変換する関数
+    function sjis_array($arr) {
+        return array_map(function($v){
+            return mb_convert_encoding($v, 'SJIS-win', 'UTF-8');
+        }, $arr);
+    }
+
+    // ▼ ヘッダー
+    fputcsv($output, sjis_array(['来店回数', '日付', '時間', 'メニュー', '担当者', '合計金額']));
+
+    $visit_total = intval(get_post_meta($cid, 'visit_count', true));
+    $current_visit = $visit_total;
+
+    foreach ($reservations as $r) {
+
+        $date  = get_post_meta($r->ID, 'res_date', true);
+        $time  = get_post_meta($r->ID, 'res_time', true);
+        $menu  = get_post_meta($r->ID, 'res_menu', true);
+        $staff_id = intval(get_post_meta($r->ID, 'res_staff', true));
+        $auto     = intval(get_post_meta($r->ID, 'res_auto_assigned', true));
+        $total    = get_post_meta($r->ID, 'res_total_price', true);
+
+        if ($staff_id > 0) {
+            $user = get_userdata($staff_id);
+            $staff_name = $user ? $user->display_name : '不明';
+            if ($auto === 1) {
+                $staff_name .= '（指名なし）';
+            }
+        } else {
+            $staff_name = '指名なし';
+        }
+
+        fputcsv($output, sjis_array([
+            $current_visit . '回目',
+            $date,
+            $time,
+            $menu,
+            $staff_name,
+            $total
+        ]));
+
+        $current_visit--;
+    }
+
+    fclose($output);
+    exit;
+});
