@@ -335,6 +335,11 @@ document.addEventListener('DOMContentLoaded', function() {
     fd.append('date', selDate);
     fd.append('time', selTime);
 
+    // ▼ auto_assigned を追加（これが最重要）
+const slotBtnSelected = document.querySelector('.slot-btn.selected');
+const autoAssigned = slotBtnSelected?.dataset.autoassign === '1' ? 1 : 0;
+fd.append('auto_assigned', autoAssigned);
+
     // ボタン制御
     confirmBtn.disabled = true;
     confirmBtn.textContent = '送信中...';

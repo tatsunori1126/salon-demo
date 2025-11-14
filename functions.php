@@ -21,6 +21,7 @@ require_once get_template_directory() . '/inc/reservation-save.php';
 require_once get_template_directory() . '/inc/ajax-reservation.php';
 require_once get_template_directory() . '/inc/mail.php';
 require_once get_template_directory() . '/inc/calendar.php';
+require_once get_template_directory() . '/inc/customer.php';
 
 
 

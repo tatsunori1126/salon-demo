@@ -66,6 +66,11 @@ function salon_submit_reservation() {
   $menu   = sanitize_text_field($_POST['menu']   ?? '');
   $staff  = intval($_POST['staff'] ?? 0); // ← 初期値は0（指名なし）
 
+  // ▼ デバッグログ（ここに追加してください）
+$debug_store = get_option('salon_store_settings', []);
+error_log("🔎 DEBUG menu = {$menu}");
+error_log("🔎 DEBUG store menus = " . print_r($debug_store['menus'], true));
+
   // ▼ バリデーション
   $errors = [];
   if(!$name)  $errors[]='お名前を入力してください。';
@@ -140,18 +145,54 @@ error_log("◆ duration_from_staff={$duration}");
 
 
   // ▼ 予約投稿を生成
-  $post_id = wp_insert_post([
-    'post_type'   => 'reservation',
-    'post_status' => 'publish',
-    'post_title'  => sprintf('%s %s %s（%s）', $date, $time, $name, $menu),
-  ]);
+$post_id = wp_insert_post([
+  'post_type'   => 'reservation',
+  'post_status' => 'publish',
+  'post_title'  => sprintf('%s %s %s（%s）', $date, $time, $name, $menu),
+]);
 
-  if (is_wp_error($post_id) || !$post_id) {
-    error_log('❌ wp_insert_post失敗');
-    wp_send_json_error(['msg' => '予約の登録に失敗しました。']);
-  }
+// 🔥 ここから下を追加（合計金額の計算）--------------------------
+// ▼ 合計金額の計算（決定版）
+$store = get_option('salon_store_settings', []);
+$menus = $store['menus'] ?? [];
 
-  // ▼ メタ保存
+// ▼ メニュー名 → メニューキーへ変換
+$menu_key = null; // ←重要：null にする（0を正しく扱える）
+foreach ($menus as $key => $m) {
+    if (!empty($m['name']) && $m['name'] === $menu) {
+        $menu_key = $key;
+        break;
+    }
+}
+
+// ▼ メニュー料金
+$menu_price = 0;
+if ($menu_key !== null && isset($menus[$menu_key]['price'])) { // ←0 も通る
+    $menu_price = intval($menus[$menu_key]['price']);
+}
+
+// ▼ 指名料（店舗設定の nomination_fee）
+$nomination_fee = intval($store['nomination_fee'] ?? 0);
+
+// 指名料金ルール：
+// ・ユーザーが指名した場合 → 指名料加算
+// ・指名なし（自動割当）の場合 → 指名料 0
+$staff_fee = ($auto_assigned == 0 && $staff > 0) ? $nomination_fee : 0;
+
+
+// ▼ 合計金額
+$total_price = $menu_price + $staff_fee;
+
+
+
+
+
+if (is_wp_error($post_id) || !$post_id) {
+  error_log('❌ wp_insert_post失敗');
+  wp_send_json_error(['msg' => '予約の登録に失敗しました。']);
+}
+
+// ▼ メタ保存
 update_post_meta($post_id, 'res_name', $name);
 update_post_meta($post_id, 'res_tel', $tel);
 update_post_meta($post_id, 'res_email', $email);
@@ -162,8 +203,17 @@ update_post_meta($post_id, 'res_staff', intval($staff));
 update_post_meta($post_id, 'res_auto_assigned', intval($auto_assigned));
 update_post_meta($post_id, 'res_datetime', "$date $time:00");
 
-// 🔥 これが重複予約防止のキー（追加する行）
+// 重複予約防止キー
 update_post_meta($post_id, 'res_duration', intval($duration));
+
+// 🔥 合計金額（正しく保存）
+update_post_meta($post_id, 'res_total_price', intval($total_price));
+
+
+/**********************************************
+     * ▼ 顧客管理に連携（超重要）
+     **********************************************/
+    salon_update_customer_data($name, $tel, $email, $date, $menu, $staff, $auto_assigned);
 
   
 
