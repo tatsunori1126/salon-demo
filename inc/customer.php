@@ -96,10 +96,16 @@ add_filter('manage_customer_posts_columns', function ($columns) {
     $new['last_visit_date'] = '最終来店日';
     $new['last_menu'] = '最終メニュー';
     $new['last_staff'] = '担当者';
+
+    // ★ ここを追加
+    $new['ltv']  = 'LTV';
+    $new['rank'] = 'ランク';
+
     $new['actions'] = '操作';
 
     return $new;
 });
+
 
 
 /**
@@ -121,48 +127,131 @@ add_action('manage_customer_posts_custom_column', function ($column, $post_id) {
 
     switch ($column) {
 
+        /* -----------------------------
+         * 電話番号
+         * ----------------------------- */
         case 'tel':
             echo esc_html(get_post_meta($post_id, 'tel', true));
             break;
 
+        /* -----------------------------
+         * メール
+         * ----------------------------- */
         case 'email':
             echo esc_html(get_post_meta($post_id, 'email', true));
             break;
 
+        /* -----------------------------
+         * 来店回数
+         * ----------------------------- */
         case 'visit_count':
             $v = intval(get_post_meta($post_id, 'visit_count', true));
             echo $v . " 回";
             break;
 
+        /* -----------------------------
+         * 最終来店日
+         * ----------------------------- */
         case 'last_visit_date':
             $d = get_post_meta($post_id, 'last_visit_date', true);
             echo salon_format_japanese_date($d);
             break;
 
+        /* -----------------------------
+         * 最終メニュー
+         * ----------------------------- */
         case 'last_menu':
             echo esc_html(get_post_meta($post_id, 'last_menu', true));
             break;
 
+        /* -----------------------------
+         * 最終担当者
+         * ----------------------------- */
         case 'last_staff':
             $uid  = intval(get_post_meta($post_id, 'last_staff', true));
             $auto = intval(get_post_meta($post_id, 'last_auto_assigned', true));
-        
+
             if ($uid > 0) {
                 $u = get_userdata($uid);
                 $name = $u ? esc_html($u->display_name) : '不明';
-        
+
                 if ($auto === 1) {
                     $name .= '（指名なし）';
                 }
                 echo $name;
-        
+
             } else {
                 echo '指名なし';
             }
             break;
-        
-        
 
+        /* -----------------------------
+         * ★ LTV（追加）
+         * ----------------------------- */
+        case 'ltv':
+
+            $tel   = get_post_meta($post_id, 'tel', true);
+            $email = get_post_meta($post_id, 'email', true);
+
+            $reservations = get_posts([
+                'post_type'   => 'reservation',
+                'numberposts' => -1,
+                'meta_query'  => [
+                    'relation' => 'OR',
+                    ['key' => 'res_tel', 'value' => $tel],
+                    ['key' => 'res_email', 'value' => $email],
+                ]
+            ]);
+
+            $total = 0;
+            foreach ($reservations as $r) {
+                $total += intval(get_post_meta($r->ID, 'res_total_price', true));
+            }
+
+            echo number_format($total) . ' 円';
+            break;
+
+        /* -----------------------------
+         * ★ ランク（追加）
+         * ----------------------------- */
+        case 'rank':
+
+            $visit = intval(get_post_meta($post_id, 'visit_count', true));
+
+            // LTV（合計売上）算出
+            $tel   = get_post_meta($post_id, 'tel', true);
+            $email = get_post_meta($post_id, 'email', true);
+
+            $reservations = get_posts([
+                'post_type'   => 'reservation',
+                'numberposts' => -1,
+                'meta_query'  => [
+                    'relation' => 'OR',
+                    ['key' => 'res_tel', 'value' => $tel],
+                    ['key' => 'res_email', 'value' => $email],
+                ]
+            ]);
+
+            $total_sales = 0;
+            foreach ($reservations as $r) {
+                $total_sales += intval(get_post_meta($r->ID, 'res_total_price', true));
+            }
+
+            // ★ ランク判定（あなたの設定）
+            if ($visit >= 10 && $total_sales >= 100000) {
+                $rank = 'VIP';
+            } elseif ($visit >= 5 && $total_sales >= 50000) {
+                $rank = 'ゴールド';
+            } else {
+                $rank = '一般';
+            }
+
+            echo esc_html($rank);
+            break;
+
+        /* -----------------------------
+         * 操作（編集 / 削除）
+         * ----------------------------- */
         case 'actions':
             $edit_url = get_edit_post_link($post_id);
             $del_url  = get_delete_post_link($post_id);
@@ -173,6 +262,7 @@ add_action('manage_customer_posts_custom_column', function ($column, $post_id) {
     }
 
 }, 10, 2);
+
 
 /**
  * ▼ 顧客名下のデフォルト操作リンク（編集・クイック編集・ゴミ箱）を非表示
