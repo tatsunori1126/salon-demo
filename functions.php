@@ -1,4 +1,5 @@
 <?php
+
 /**
  * =========================================================
  * IWAI制作所：予約管理システム functions.php（最終安定版）
@@ -22,6 +23,7 @@ require_once get_template_directory() . '/inc/ajax-reservation.php';
 require_once get_template_directory() . '/inc/mail.php';
 require_once get_template_directory() . '/inc/calendar.php';
 require_once get_template_directory() . '/inc/customer.php';
+require_once get_template_directory() . '/inc/reminder.php';
 
 
 
@@ -326,3 +328,23 @@ add_action('save_post_reservation', function($post_id, $post, $update) {
   }
 
 }, 20, 3);
+
+
+add_action('admin_init', function () {
+  $posts = get_posts([
+      'post_type' => 'reservation',
+      'numberposts' => -1,
+      'post_status' => 'any'
+  ]);
+  foreach ($posts as $p) {
+      $d = get_post_meta($p->ID, 'res_date', true);
+      $t = get_post_meta($p->ID, 'res_time', true);
+      error_log("🔍 RES CHECK ID={$p->ID} date={$d} time={$t}");
+  }
+});
+
+add_action('init', function() {
+  $ts = wp_next_scheduled('salon_reminder_cron');
+  error_log("🔧 next_scheduled(salon_reminder_cron) = " . ($ts ? date('Y-m-d H:i:s', $ts) : 'NONE'));
+});
+
